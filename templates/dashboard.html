@@ -1,0 +1,438 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<section class="band">
+    <form method="get" action="/" class="panel controls-panel">
+        <input type="hidden" name="page" value="1">
+        <div class="control-grid top-grid">
+            <label>
+                <span>Portal</span>
+                <select name="portal">
+                    {% for name in portal_names %}
+                    <option value="{{ name }}" {% if name == selected_portal %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>Iteration Path</span>
+                <input
+                    type="text"
+                    name="iteration_path"
+                    value="{{ selected_iteration }}"
+                    placeholder="Product\\Team\\Sprint 42"
+                    list="iteration-path-options"
+                >
+            </label>
+            <label>
+                <span>Page Size</span>
+                <select name="page_size">
+                    {% for size in [10, 20, 30, 50] %}
+                    <option value="{{ size }}" {% if pagination.page_size == size %}selected{% endif %}>{{ size }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="checkbox-field">
+                <span>Current Iteration Only</span>
+                <input type="hidden" name="filter_mode" value="manual">
+                <input type="checkbox" name="current_iteration_only" value="true" {% if current_iteration_only %}checked{% endif %}>
+            </label>
+            <label class="checkbox-field">
+                <span>Hide Closed</span>
+                <input type="hidden" name="visibility_mode" value="manual">
+                <input type="checkbox" name="hide_closed" value="true" {% if hide_closed %}checked{% endif %}>
+            </label>
+            <div class="actions single-action">
+                <button type="submit">Load Work Items</button>
+            </div>
+        </div>
+        {% if selection_error %}
+        <p class="hint error">
+            Add the Content team members in <a href="{{ request.url_for('settings_page') }}?portal={{ selected_portal }}">Settings</a>.
+            Work item discovery uses the configured area path plus those assignees.
+        </p>
+        {% elif current_iteration %}
+        <p class="hint">
+            Current iteration resolved from team settings:
+            <code>{{ current_iteration.path }}</code>
+        </p>
+        {% elif current_iteration_only and selected_iteration %}
+        <p class="hint">
+            Filtering by iteration path:
+            <code>{{ selected_iteration }}</code>
+        </p>
+        {% elif filter_notice %}
+        <p class="hint">
+            {{ filter_notice }}
+        </p>
+        {% elif available_iterations %}
+        <p class="hint">
+            Detected iteration paths from assigned tasks:
+            {% for iteration in available_iterations[:5] %}
+            <code>{{ iteration }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </p>
+        {% elif iterations_error %}
+        <p class="hint">
+            Automatic sprint detection is not available for the configured iteration team right now.
+            The dashboard can still load tasks from
+            <code>{{ work_item_area_path or "-" }}</code>
+            and the configured Content assignees.
+        </p>
+        {% else %}
+        <p class="hint">
+            Work item discovery uses <code>{{ work_item_area_path or "-" }}</code> plus the configured Content team members.
+            Work item details are loaded only when a card is opened.
+        </p>
+        {% endif %}
+    </form>
+</section>
+
+{% if message %}
+<section class="band">
+    <div class="flash flash-{{ level }}">{{ message }}</div>
+</section>
+{% endif %}
+
+{% if auth_message %}
+<section class="band">
+    <div class="flash flash-warning">{{ auth_message }}</div>
+    <p class="hint">Authentication settings for this portal are available in <a href="{{ request.url_for('settings_page') }}?portal={{ selected_portal }}">Settings</a>.</p>
+</section>
+{% endif %}
+
+{% if work_items_error %}
+<section class="band">
+    <div class="flash flash-error">{{ work_items_error }}</div>
+</section>
+{% endif %}
+
+<section class="band">
+    <div class="panel summary-panel">
+        <div class="metric">
+            <span class="metric-label">Configured Branches</span>
+            <strong>{{ portal.branch_chain|length }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Visible On Page</span>
+            <strong>{{ pagination.visible_count }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Page</span>
+            <strong>{{ pagination.page }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Current Filter</span>
+            <strong>
+                {% if current_iteration_only and selected_iteration %}
+                Current Iteration
+                {% elif current_iteration_only %}
+                Assigned Tasks
+                {% else %}
+                All Assigned Tasks
+                {% endif %}
+            </strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Content Team Members</span>
+            <strong>{{ runtime_settings.content_team_members|length }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Automation Runner</span>
+            <strong>{% if runtime_settings.automation_runner_enabled %}Enabled{% else %}Disabled{% endif %}</strong>
+        </div>
+    </div>
+</section>
+
+{% if auto_refresh_seconds %}
+<section class="band">
+    <div class="live-refresh-note" id="live-refresh-note">
+        <strong>{{ active_automation_count }}</strong>
+        automatic flow{% if active_automation_count != 1 %}s{% endif %} in progress.
+        This page checks progress every {{ auto_refresh_seconds }} seconds while background work is active.
+    </div>
+</section>
+{% endif %}
+
+<section class="band">
+    <div class="panel table-panel">
+        {% if available_iterations %}
+        <datalist id="iteration-path-options">
+            {% for iteration in available_iterations %}
+            <option value="{{ iteration }}"></option>
+            {% endfor %}
+        </datalist>
+        {% endif %}
+        <div class="section-header">
+            <div>
+                <h2>Assigned Work Items</h2>
+                <p>Cards load quickly with list fields only. Open a card to load full work item context and actions.</p>
+            </div>
+        </div>
+        {% if items %}
+        <form method="post" action="/work-items/auto-flow" id="bulk-auto-flow-form" class="bulk-toolbar">
+            <input type="hidden" name="portal" value="{{ selected_portal }}">
+            <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+            <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+            <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+            <div class="bulk-toolbar-row">
+                <label class="bulk-select-all">
+                    <input
+                        id="bulk-select-visible"
+                        type="checkbox"
+                        onclick="document.querySelectorAll('.summary-select-input').forEach(function (checkbox) { checkbox.checked = this.checked; }.bind(this));"
+                    >
+                    <span class="bulk-select-title">Select all visible</span>
+                </label>
+                <div class="bulk-toolbar-actions">
+                    <button class="bulk-run-button" type="submit">Run Automatic TFS Flow for Selected</button>
+                </div>
+            </div>
+        </form>
+        <div class="work-item-list">
+            {% for item in items %}
+            <details
+                class="work-item-card {{ item.state_class }}"
+                data-work-item-id="{{ item.id }}"
+                data-detail-url="{{ request.url_for('work_item_detail', work_item_id=item.id) }}?portal={{ selected_portal|urlencode }}&iteration_path={{ selected_iteration|urlencode }}&current_iteration_only={{ 'true' if current_iteration_only else 'false' }}&hide_closed={{ 'true' if hide_closed else 'false' }}"
+            >
+                <summary class="work-item-summary">
+                    <div class="work-item-summary-grid">
+                        <div class="summary-section summary-primary">
+                            <div class="id-line">
+                                <span class="summary-select-inline" onclick="event.stopPropagation();">
+                                    <input
+                                        class="summary-select-input"
+                                        type="checkbox"
+                                        form="bulk-auto-flow-form"
+                                        name="selected_work_item_ids"
+                                        value="{{ item.id }}"
+                                        title="Select work item {{ item.id }}"
+                                        aria-label="Select work item {{ item.id }}"
+                                        onclick="event.stopPropagation();"
+                                    >
+                                </span>
+                                <a href="{{ item.url }}" target="_blank">WI {{ item.id }}</a>
+                                <span class="pill">{{ item.type or "Unknown" }}</span>
+                                {% if item.parent_type %}
+                                <span class="pill subtle">Parent: {{ item.parent_type }}</span>
+                                {% endif %}
+                            </div>
+                            <strong>{{ item.title }}</strong>
+                            <div class="meta-list">
+                                <span class="state-badge {{ item.state_class }}">{{ item.state_label }}</span>
+                                <span>{{ item.changed_label }}</span>
+                                {% if item.tags %}
+                                <span>{{ item.tags }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="summary-section">
+                            <span class="summary-label">Context</span>
+                            <span>{{ item.iteration_path or "-" }}</span>
+                            <span>{{ item.area_path or "-" }}</span>
+                            <span>{{ item.reviewer_display_name or "-" }}</span>
+                        </div>
+                        <div class="summary-section">
+                            <span class="summary-label">Automation Stage</span>
+                            <strong data-status-field="stage-label">{{ item.stage_label }}</strong>
+                            <div class="progress-mini">
+                                {% for step in item.progress_steps %}
+                                <span class="progress-mini-step is-{{ step.state }}" data-progress-index="{{ loop.index0 }}"></span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="summary-section">
+                            <span class="summary-label">Status</span>
+                            <span><strong>Branch:</strong> <span data-status-field="branch-status">{{ item.branch_status or "-" }}</span></span>
+                            <span><strong>CM GPT:</strong> <span data-status-field="copilot-status">{{ item.copilot_status or "-" }}</span></span>
+                            <span><strong>Push:</strong> <span data-status-field="push-status">{{ item.push_status or "-" }}</span></span>
+                            <span><strong>PR:</strong> <span data-status-field="pr-status">{{ item.pr_status or "-" }}</span></span>
+                        </div>
+                        <div class="summary-toggle">
+                            <span>Open details</span>
+                        </div>
+                    </div>
+                </summary>
+                <div class="work-item-details" data-detail-container>
+                    <div class="detail-loading">
+                        <span class="loading-spinner small"></span>
+                        <span>Open the card to load work item details.</span>
+                    </div>
+                </div>
+            </details>
+            {% endfor %}
+        </div>
+        <nav class="pagination-bar" aria-label="Work item pages">
+            <form method="get" action="/">
+                <input type="hidden" name="portal" value="{{ selected_portal }}">
+                <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                <input type="hidden" name="filter_mode" value="manual">
+                <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                <input type="hidden" name="visibility_mode" value="manual">
+                <input type="hidden" name="page_size" value="{{ pagination.page_size }}">
+                <input type="hidden" name="page" value="{{ pagination.previous_page }}">
+                <button type="submit" {% if not pagination.has_previous %}disabled{% endif %}>Previous Page</button>
+            </form>
+            <span>Page {{ pagination.page }} · {{ pagination.visible_count }} visible</span>
+            <form method="get" action="/">
+                <input type="hidden" name="portal" value="{{ selected_portal }}">
+                <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                <input type="hidden" name="filter_mode" value="manual">
+                <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                <input type="hidden" name="visibility_mode" value="manual">
+                <input type="hidden" name="page_size" value="{{ pagination.page_size }}">
+                <input type="hidden" name="page" value="{{ pagination.next_page }}">
+                <button type="submit" {% if not pagination.has_next %}disabled{% endif %}>Next Page</button>
+            </form>
+        </nav>
+        {% else %}
+        <div class="empty-state">
+            <p>No tasks matched the current selection yet. Adjust the portal, assigned-member settings, or filters and load again.</p>
+        </div>
+        {% endif %}
+    </div>
+</section>
+
+<script>
+    (function () {
+        const cards = Array.from(document.querySelectorAll(".work-item-card[data-work-item-id]"));
+
+        async function loadDetails(card) {
+            if (card.dataset.detailsLoaded === "true" || card.dataset.detailsLoading === "true") {
+                return;
+            }
+            const target = card.querySelector("[data-detail-container]");
+            const url = card.dataset.detailUrl;
+            if (!target || !url) {
+                return;
+            }
+            card.dataset.detailsLoading = "true";
+            target.innerHTML = '<div class="detail-loading"><span class="loading-spinner small"></span><span>Loading work item details...</span></div>';
+            try {
+                const response = await fetch(url, { headers: { "Accept": "text/html" } });
+                if (!response.ok) {
+                    throw new Error("Request failed with status " + response.status);
+                }
+                target.innerHTML = await response.text();
+                card.dataset.detailsLoaded = "true";
+                const state = target.querySelector("[data-stage-label]");
+                if (state) {
+                    const fields = {
+                        "stage-label": state.dataset.stageLabel,
+                        "branch-status": state.dataset.branchStatus,
+                        "copilot-status": state.dataset.copilotStatus,
+                        "push-status": state.dataset.pushStatus,
+                        "pr-status": state.dataset.prStatus,
+                    };
+                    Object.keys(fields).forEach(function (field) {
+                        const element = card.querySelector('[data-status-field="' + field + '"]');
+                        if (element) {
+                            element.textContent = fields[field] || "-";
+                        }
+                    });
+                    const progressStates = String(state.dataset.progressStates || "").split(",").filter(Boolean);
+                    card.querySelectorAll("[data-progress-index]").forEach(function (element) {
+                        const index = Number(element.dataset.progressIndex || "0");
+                        if (progressStates[index]) {
+                            element.className = "progress-mini-step is-" + progressStates[index];
+                        }
+                    });
+                }
+            } catch (error) {
+                target.innerHTML = '<div class="flash flash-error">Failed to load details. Close and open the card again to retry.</div>';
+                delete card.dataset.detailsLoaded;
+            } finally {
+                delete card.dataset.detailsLoading;
+            }
+        }
+
+        cards.forEach(function (card) {
+            card.addEventListener("toggle", function () {
+                if (card.open) {
+                    loadDetails(card);
+                }
+            });
+        });
+    }());
+</script>
+
+{% if auto_refresh_seconds %}
+<script>
+    (function () {
+        const refreshDelayMs = {{ auto_refresh_seconds * 1000 }};
+        const portal = {{ selected_portal | tojson }};
+        const cards = Array.from(document.querySelectorAll(".work-item-card[data-work-item-id]"));
+        const workItemIds = cards
+            .map(function (card) { return card.dataset.workItemId; })
+            .filter(Boolean);
+        const note = document.getElementById("live-refresh-note");
+
+        function setField(card, field, value) {
+            const target = card.querySelector('[data-status-field="' + field + '"]');
+            if (target) {
+                target.textContent = value || "-";
+            }
+        }
+
+        function updateProgress(card, steps) {
+            card.querySelectorAll("[data-progress-index]").forEach(function (element) {
+                const index = Number(element.dataset.progressIndex || "0");
+                const step = steps[index];
+                if (!step) {
+                    return;
+                }
+                element.className = "progress-mini-step is-" + step.state;
+            });
+        }
+
+        async function pollStatuses() {
+            if (document.hidden || !workItemIds.length) {
+                return;
+            }
+            try {
+                const params = new URLSearchParams({
+                    portal: portal,
+                    work_item_ids: workItemIds.join(","),
+                });
+                const response = await fetch("/work-items/statuses?" + params.toString(), {
+                    headers: { "Accept": "application/json" },
+                });
+                if (!response.ok) {
+                    return;
+                }
+                const payload = await response.json();
+                const statuses = Array.isArray(payload.items) ? payload.items : [];
+                let activeCount = 0;
+                statuses.forEach(function (status) {
+                    const card = cards.find(function (candidate) {
+                        return candidate.dataset.workItemId === String(status.id);
+                    });
+                    if (!card) {
+                        return;
+                    }
+                    setField(card, "stage-label", status.stage_label);
+                    setField(card, "branch-status", status.branch_status);
+                    setField(card, "copilot-status", status.copilot_status);
+                    setField(card, "push-status", status.push_status);
+                    setField(card, "pr-status", status.pr_status);
+                    updateProgress(card, status.progress_steps || []);
+                    if (status.is_auto_flow_active) {
+                        activeCount += 1;
+                    }
+                });
+                if (note && activeCount === 0) {
+                    note.innerHTML = "<strong>All visible automatic flows finished.</strong> The latest local pipeline state is shown below.";
+                }
+            } catch (error) {
+                return;
+            }
+        }
+
+        pollStatuses();
+        window.setInterval(pollStatuses, refreshDelayMs);
+    }());
+</script>
+{% endif %}
+{% endblock %}

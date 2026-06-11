@@ -1,0 +1,546 @@
+# Project Memory - TFS Documentation Automation MVP
+
+Last updated: 2026-05-28
+
+## Purpose
+
+This file preserves project context, decisions, progress, pending work, and useful constraints for any LLM or developer working on this MVP later.
+
+Keep this file concise, current, and factual. Update it whenever the project direction changes, a meaningful implementation step is completed, or a pending task becomes obsolete.
+
+## Project Context
+
+The project explores an automation pipeline for documentation work items in TFS/Azure DevOps Server.
+
+Current problem:
+
+- At the start of each sprint, documentation team members manually inspect development work items.
+- Many work items only require very small documentation changes, or no documentation change at all.
+- This manual triage consumes time that could be used for larger documentation work such as new feature docs and tutorials.
+
+Target solution:
+
+- Read new/current sprint work items from TFS.
+- Classify their likely documentation impact.
+- Let a human select candidates.
+- Create isolated branches per work item.
+- Use an approved LLM workflow, likely Copilot in the company environment, to suggest documentation changes.
+- Run validations.
+- Create PRs only after human approval.
+
+## Current Repository
+
+Path:
+
+```text
+C:\CM-REPO\Content\tfs-doc-automation-mvp
+```
+
+This project was created as an isolated copy of the existing Cherry Picks dashboard. The original dashboard must remain untouched unless explicitly requested.
+
+Copied baseline files:
+
+- `app.py`
+- `tfs_dashboard.py`
+- `requirements.txt`
+- `run_dashboard.ps1`
+- `.gitignore`
+- `config/tfs_dashboard.json`
+
+New project files:
+
+- `README.md`
+- `docs/technical-design.md`
+- `.agents/memory.md`
+
+## Related Existing Project
+
+Original dashboard:
+
+```text
+C:\CM-REPO\Content\tfs-cherry-pick-dashboard
+```
+
+Useful existing capabilities from that project:
+
+- TFS/Azure DevOps Server client.
+- Windows Credentials and PAT authentication.
+- Portal/repository configuration.
+- PR and work item reads.
+- Streamlit UI.
+
+Important: the Cherry Picks dashboard is read-only and should stay stable. The documentation automation MVP should evolve in its own folder.
+
+## Current Technical Direction
+
+Framework decision:
+
+- Use FastAPI with server-rendered Jinja templates for the MVP dashboard.
+- Keep business logic outside the web layer so the project can later move to a richer frontend if needed.
+
+Architecture direction:
+
+```text
+Dashboard / Control Plane
+  -> TFS Adapter
+  -> Documentation Impact Classifier
+  -> Repository Adapter
+  -> LLM Agent Adapter
+  -> Validation Runner
+  -> Approval Gate
+
+Background Runner / Worker
+  -> resumes persisted flows
+  -> polls agent results
+  -> advances green-lighted items to push and draft PR
+  -> optionally discovers new open work items continuously
+```
+
+Initial philosophy:
+
+- Human-in-the-loop by default.
+- No automatic PRs without explicit approval for final publication.
+- TFS branch and draft PR actions are allowed from the dashboard when explicitly triggered.
+- Prefer supported VS Code and Copilot integration points over undocumented Copilot automation APIs.
+- Treat the dashboard as a control surface, not as the only process responsible for progressing long-running automation.
+
+## Decisions Made
+
+1. Create a separate project instead of modifying the Cherry Picks dashboard directly.
+2. Reuse a minimal copy of the Cherry Picks dashboard as the initial technical base.
+3. Document the MVP before implementing new automation behavior.
+4. Start from the Cherry Picks dashboard baseline, then move the MVP to FastAPI for operational actions.
+5. Add this `.agents/memory.md` file as persistent context for future LLM-assisted development.
+6. Write all official project documentation, README files, and inline code comments in English.
+7. Replace the initial Streamlit direction with a FastAPI dashboard because direct operational actions are part of the MVP scope.
+8. Store runtime parameters in a local `.env` file and make them editable from the dashboard.
+9. Treat the work item source board and the target documentation repository as separate configuration concerns.
+10. Keep configuration concerns off the main dashboard and group them in a dedicated Settings page.
+11. Load candidate work items primarily by Content-team assignee, with current-sprint filtering as an optional pre-filter instead of the only discovery strategy.
+12. Normalize `work_item_team` from a plain team name, a longer path, or a sprint-board URL so the current iteration lookup stays user-friendly.
+13. Scope candidate work item discovery to a configured development area path before applying Content-team assignee filters.
+14. Integrate CM GPT through the supported VS Code Copilot surface by launching `code chat` with a custom agent and a generated work item context file, instead of pretending there is a stable backend Copilot chat API.
+15. Store the target local documentation workspace per portal because TFS repository targets and WSL clone paths are separate concerns.
+16. Support WSL UNC workspace paths such as `\\wsl.localhost\Ubuntu\workspaces\DocumentationPortal-#01` and normalize them before branch checkout.
+17. Build the CM GPT handoff as a package that includes full work item Markdown/JSON/HTML exports plus repository instruction files discovered from `AGENTS.md`, `.github/copilot-instructions.md`, and `.agents`.
+18. Reduce dashboard latency with short-lived in-memory caching for current iteration lookup, work item discovery, repository refs, and per-branch PR checks.
+19. Reduce TFS work item detail calls by collapsing the initial item read to a single relations-expanded batch call per child/parent set.
+20. Launch CM GPT from the Windows VS Code CLI instead of the WSL `code` wrapper, because the Remote WSL wrapper does not reliably forward the `chat` subcommand.
+21. Store generated CM GPT work item context files under the target repository `.automation-context/copilot/...` directory so the chat session can read them as normal workspace files without prompting for access to a folder outside the workspace. The folder is excluded through local `.git/info/exclude`.
+22. Let the dashboard manage local VS Code Copilot permission defaults and additional read-access folders by writing `chat.permissions.default`, `chat.tools.global.autoApprove`, and `github.copilot.chat.additionalReadAccessFolders` into the user's VS Code `settings.json`.
+23. Treat the CM GPT model selection as safety-sensitive. In strict model-safety mode, the dashboard opens the WSL remote workspace and prepares a prompt file, but does not automatically submit proprietary work item content to chat.
+24. Prefer opening target repositories through the WSL remote URI instead of UNC paths, because UNC launch opens VS Code in a local Windows context and can hide WSL/Docker/devcontainer tooling from the agent.
+25. Manage `chat.editing.autoAcceptDelay` from the dashboard so accepted CM GPT edits can be applied automatically when the VS Code session is in a trusted configuration.
+26. Treat Microsoft 365 Copilot Desktop agents and VS Code Copilot agents as separate providers. The company `CM GPT` agent is visible in Microsoft 365 Copilot Desktop, but that surface is not automation-capable for local repository edits in this MVP.
+27. Copy Microsoft 365 Copilot Desktop prompts through PowerShell standard input instead of command-line or base64 arguments so large work item payloads do not break `Set-Clipboard`.
+28. Percent-encode WSL remote folder URIs before opening VS Code, because workspace paths such as `DocumentationPortal-#01` otherwise treat `#01` as a URI fragment.
+29. Validate the current WSL Git branch after checkout before handing work item context to CM GPT, so the model only receives the task when the workspace is on the expected work branch.
+30. Treat dashboard flash messages as transient URL state. The page removes `message` and `level` query parameters after rendering, and the backend truncates long messages before display or redirect.
+31. Treat `desktop_prepared` as a deprecated non-pipeline state. The automatic CM GPT action should now block Microsoft 365 Copilot Desktop instead of presenting a manual handoff as successful progress.
+32. The CM GPT dashboard action is an automatic pipeline action. It should either launch an automation-capable executor or fail clearly; it must not rely on manual prompt paste steps.
+33. Temporary end-to-end testing may disable `Strict CM GPT Safety Mode` and use another configured VS Code Copilot model such as `GPT-4o`. This is only for pipeline validation and should be reverted before processing proprietary work items in the approved flow.
+34. Agent completion is coordinated through `.automation-context/copilot/<branch>/agent-result.json`. The dashboard only commits, pushes, and creates a draft PR when that file is valid, green-lighted, and lists repository-relative changed files.
+35. Draft PR creation is now gated behind a successful dashboard-managed push. The automatic worker can poll for the agent result file and continue with commit, push, and PR creation when green light appears.
+36. VS Code handoff window behavior is configurable. The current environment can reuse an existing window or open a dedicated one depending on the configured runtime setting.
+37. Long-running automation must be durable. The background runner resumes persisted flows, polls for agent results, and can continue work after dashboard restarts or after the initial request has already returned.
+38. Continuous mode is a supported future operating mode: the runner can periodically discover eligible current-iteration work items and start the full pipeline without dashboard interaction.
+39. Draft PR creation must formally associate a work item in TFS. Prefer the parent work item when one exists; otherwise link the task itself.
+40. Microsoft Loop is a planned documentation context source because development implementation notes may diverge from formal specs. The pipeline should ingest relevant Loop content before asking the agent to change documentation, while surfacing conflicts instead of silently choosing one source.
+41. Draft PR descriptions should stay reviewer-focused: include a concise change summary from the agent result plus the work item link, and avoid repeating source branch, target branch, or boilerplate creation text already visible elsewhere in the PR.
+42. Each green-lighted task should produce a final Markdown report explaining what changed, why it changed, which files changed, validation notes, reviewer notes, and any spec/reference sections used.
+43. The initial agent instruction body must be configurable from Settings. Safety gates and the result-file contract remain controlled by the application.
+44. Agent execution must be provider-oriented. VS Code Copilot remains the main executor, while Codex, Claude, or another local CLI can be selected when a command template is configured.
+45. Performance problems must be measurable. Dashboard load, work item query, repository enrichment, and TFS request timings are logged to `data/performance.log`.
+
+## MVP Scope
+
+Phase 1 now covers discovery, triage, TFS workflow preparation, durable background progression, and the first automation-capable CM GPT execution path:
+
+- Select or detect the current sprint/iteration.
+- Query TFS tasks assigned to configured Content team members.
+- Restrict candidate discovery to the configured development area subtree.
+- Optionally pre-filter assigned tasks to the current sprint.
+- Display work item metadata.
+- Filter by type, state, tags, area, assigned user, and text.
+- Allow a human to approve/skip candidates.
+- Store local run state in SQLite.
+- Infer the target base branch from work item information.
+- Allow dashboard override of base branch and work type.
+- Create work branches in TFS.
+- Launch CM GPT automatically on the corresponding WSL workspace branch when an approved automation-capable executor is configured.
+- Persist the agent result, push state, and PR state locally so the flow can continue from the last completed stage.
+- Commit and push only when the agent result gives green light.
+- Create draft PRs and assign the required reviewer from the work item assignee.
+- Link the parent work item to the draft PR when available, with fallback to the task itself.
+- Resume unfinished automatic flows in the background.
+- Optionally discover eligible current-iteration work items continuously.
+
+Still out of scope for the current slice:
+
+- merge/cherry-pick;
+- changing TFS work items;
+- publishing documentation;
+- Microsoft Loop content extraction;
+- advanced validation orchestration;
+- production hardening for a dedicated always-on worker deployment.
+
+## Proposed Work Item Classification
+
+Initial categories:
+
+- `No documentation needed`
+- `Potential small doc update`
+- `Needs human review`
+- `Likely new documentation/tutorial`
+
+Possible classification signals:
+
+- work item type;
+- tags;
+- title keywords;
+- description keywords;
+- acceptance criteria;
+- area path;
+- linked PRs or commits;
+- affected components.
+
+Start with deterministic rules. Add LLM classification later.
+
+## Implemented Persistent Checkpoints
+
+The current implementation persists enough state to resume work after the initial request:
+
+- triage and saved branch plan;
+- branch status and effective branch;
+- CM GPT launch status;
+- agent result status;
+- final report path;
+- push status;
+- PR status;
+- automatic-flow eligibility.
+
+The orchestration layer uses these checkpoints to decide what can happen next instead of assuming a request-response interaction will finish the full pipeline.
+
+## Planned Internal States
+
+Suggested states for automation records:
+
+- `Discovered`
+- `Classified`
+- `Selected`
+- `Branch Created`
+- `LLM Drafted`
+- `Validation Failed`
+- `Ready For Review`
+- `Approved For PR`
+- `PR Created`
+- `Skipped`
+
+These names are still useful as a conceptual workflow vocabulary, but the current implementation now persists several concrete stage checkpoints instead of relying on only the initial triage states.
+
+## Backlog
+
+### Immediate
+
+- [Done] Rename/refactor copied UI so it no longer presents itself as a Cherry Pick dashboard.
+- [Done] Extract reusable TFS client code from `tfs_dashboard.py`.
+- [Done] Add WIQL query support for work items by iteration path.
+- [Done] Add a triage page for sprint work items.
+- [Done] Add a local persistence layer for work item planning decisions.
+- [Done] Add work-branch planning based on version tags, branch chain, and work item type/parent type.
+- [Done] Add work-branch creation through the TFS refs API.
+- [Done] Add draft PR creation with required reviewer assignment.
+- [Done] Add CM GPT handoff and launch support through VS Code Copilot custom-agent and CLI workflow.
+- [Done] Add WSL UNC path normalization and richer CM GPT context packaging.
+- [Done] Add short-lived dashboard caching and lighter TFS read paths to reduce repeated page-load latency.
+- [Done] Add configurable VS Code handoff window behavior.
+- [Done] Add durable automatic-flow resumption with a background runner and standalone worker entrypoint.
+- [Done] Add optional continuous discovery mode for current-iteration work items.
+- [Done] Add formal PR-to-work-item linking, preferring the parent work item when available.
+- [Done] Add final per-task report generation after a green-light agent result.
+- [Done] Add configurable initial agent prompt template.
+- [Done] Add provider selection for VS Code Copilot, Codex CLI, Claude CLI, Custom CLI, and Microsoft 365 Desktop visibility.
+- [Done] Add performance logging to support slow dashboard-load analysis.
+- [Done] Add a Settings overview with operational status and section shortcuts.
+
+### Next
+
+- Add rules-based documentation impact classifier.
+- Add feedback controls: approve candidate, skip, needs manual review.
+- Add export of triage results.
+- Add durable run history and audit records for each automated stage.
+- Add configurable documentation repositories.
+- Add better reviewer fallback behavior when the assignee identity is incomplete.
+- Add a friendlier reviewer override editor on top of the current JSON textarea.
+- [Done] Add a portal settings UI so `work_item_project` and `work_item_team` can be edited without changing JSON manually.
+- Add a friendlier reviewer/member mapping UI on top of the current text and JSON inputs.
+- Add create/delete portal management on the Settings page if multiple documentation targets become common.
+- Add Microsoft Loop context ingestion for work items that reference implementation notes.
+- Split the embedded runner into a dedicated deployable service for production.
+- Add a single-runner lease or lock so two workers cannot process the same automatic flow concurrently.
+- Add retry/backoff policy and failure classification for TFS, Git, and agent-execution steps.
+- [Done] Add lightweight dashboard polling while active automatic flows are still in progress.
+- Use `data/performance.log` to identify and reduce the slowest TFS calls on initial dashboard load.
+- Turn the Settings page overview into real tabs or separate pages if the single-page layout remains too dense.
+- Add first-class report viewing/download/opening from the dashboard instead of showing only the filesystem path.
+
+### Later
+
+- Add LLM-assisted classification.
+- Add candidate file discovery in documentation repos.
+- Expand CM GPT automation from per-item launch to richer bulk and end-to-end flows.
+- [Done] Improve reference-spec discovery from the shared `Documentation` repository beyond exact `.docx` name matches.
+- Consider lazy-loading full work item detail panels only when a card is expanded if first-load latency still feels too high.
+- Add validation runner.
+- Add human approval gate for PR creation.
+
+## Planned Task: Microsoft Loop Context Ingestion
+
+Goal:
+
+- Treat Microsoft Loop implementation notes as a first-class source of truth when a work item references them, especially when those notes contain architecture decisions or implementation detail that may differ from older specs.
+
+Expected behavior:
+
+1. Detect Microsoft Loop references in the work item body, comments, linked artifacts, or manually entered dashboard metadata.
+2. Resolve each Loop sharing link to a Microsoft Graph-backed drive item.
+3. Export the Loop page or component into a stable text representation such as HTML or Markdown.
+4. Store the exported material inside the generated `.automation-context/copilot/<branch>/...` package beside the work item export and repository instructions.
+5. Include Loop material in the CM GPT prompt context before documentation edits are attempted.
+6. When Loop notes and formal specs conflict, require the agent to surface the conflict explicitly in its result instead of silently choosing one source.
+
+Implementation outline:
+
+- add portal/runtime settings for Microsoft Graph authentication and feature enablement;
+- add a Loop reference extractor in the work-item packaging layer;
+- add a Graph adapter that can resolve share URLs and download/export Loop content;
+- add local caching keyed by source URL plus last-modified metadata to avoid repeated Graph fetches;
+- extend the context manifest so reviewers can see which Loop sources were included;
+- add UI fields for manually attaching or correcting Loop links when they are not present directly in the work item;
+- add tests for link extraction, Graph resolution failure, duplicate links, and conflict reporting behavior.
+
+Open questions for this task:
+
+- Which Loop URL patterns are most common in real work items in this team?
+- Will the service use delegated access, an application identity, or a hybrid model?
+- What Microsoft Graph permissions and admin consent are available in the company tenant?
+- Are all relevant Loop pages stored in OneDrive or SharePoint, or do some use SharePoint Embedded containers with additional permission requirements?
+- Should the pipeline process only explicitly linked Loop pages, or also search by work item ID/title in a controlled way?
+- How should source precedence be communicated when Loop notes, specs, and the work item disagree?
+
+## Open Questions
+
+- How should the current sprint be identified: manual iteration selection, configured current iteration, or TFS team settings?
+- Which work item types enter the MVP once task-only discovery is stable: Task only, or should Bug/User Story items also appear directly?
+- Should the CM GPT step operate on the main WSL clone directly, or should the dashboard create a dedicated local worktree per work item for safer parallel work?
+- Which fields are consistently available in this TFS setup: description, acceptance criteria, repro steps, system info?
+- Can Copilot be invoked programmatically in the company environment, or should the MVP generate prompts/context for manual VS Code execution?
+- Which documentation repository should be targeted first: DocumentationPortal, DeveloperPortal, or both?
+- Which validation commands exist in the documentation repositories?
+- Which exact display names or unique names should be configured for the Content team member list?
+- Why does the `Development` team currently return no configured iterations through the Work API, even though sprint taskboards exist in the web UI?
+- Which Microsoft Loop URL patterns and Graph permissions are available in the company tenant?
+- Should production deployment keep the runner embedded in the dashboard process, or move immediately to a dedicated worker service with single-runner coordination?
+
+## Development Notes For Future Agents
+
+- Prefer small, incremental changes.
+- Do not modify `C:\CM-REPO\Content\tfs-cherry-pick-dashboard` unless the user explicitly asks.
+- Keep copied MVP code working while refactoring.
+- Update this file after meaningful progress.
+- Keep official documentation, README files, and inline code comments in English.
+- Keep secrets out of files.
+- Preserve Windows Credentials/PAT behavior from the original dashboard.
+- Avoid creating branches, PRs, or TFS writes outside the explicit automation flows already approved by the user.
+- The current local test environment may temporarily use `GPT-4o` with strict CM GPT enforcement disabled. Before processing proprietary work items in the approved production flow, restore the CM GPT-only safety posture.
+- The dashboard currently starts an embedded runner for convenience. Production deployment should prefer exactly one dedicated worker process or an equivalent lease-based coordination mechanism.
+
+## Latest Progress
+
+2026-04-21:
+
+- Created isolated project folder: `C:\CM-REPO\Content\tfs-doc-automation-mvp`.
+- Copied minimal Cherry Picks dashboard baseline into the new project.
+- Added `README.md`.
+- Added `docs/technical-design.md`.
+- Added `.agents/memory.md`.
+- Converted project documentation to English and recorded the language convention.
+
+2026-04-23:
+
+- Replaced the dashboard implementation with FastAPI and Jinja templates.
+- Added reusable modules for configuration, SQLite persistence, branch planning, TFS API access, service orchestration, and web routes.
+- Implemented WIQL-based work item loading by iteration path.
+- Implemented current-iteration lookup through TFS team settings when a portal team is configured.
+- Implemented branch inference from work item version tags and branch-chain configuration.
+- Implemented branch-name generation with the pattern `version.minor/work-type/work-item-id-short-title`.
+- Implemented work-branch creation through the TFS refs API.
+- Implemented draft PR creation through the TFS pull request APIs.
+- Implemented required reviewer assignment using the work item assignee identity.
+- Added local SQLite persistence for triage, branch planning, and branch/PR status.
+- Added `.env` runtime settings with dashboard editing support.
+- Added preferred-port and automatic port fallback handling through `run_server.py`.
+- Added reviewer override mapping and default reviewer settings through `.env`.
+- Separated work item source configuration from target repository configuration.
+- Moved portal/runtime/authentication configuration into a dedicated Settings page and kept the main dashboard focused on operations.
+- Switched work item discovery to an assignee-first model using the configured Content team member list.
+- Added optional current-iteration filtering on top of assigned-task discovery.
+- Added runtime settings for Content team members and default sprint filtering behavior.
+- Made `work_item_team` normalization tolerant of plain team names, longer paths, and sprint-board URLs.
+- Verified against the live TFS project that `Gaivosa` is not a valid Work API team name for current-iteration lookup, while `Development` is valid but currently returns no configured iterations.
+- Added `work_item_area_path` to portal settings and to the WIQL query so candidate tasks are now constrained to `Product\Development` before assignee filtering.
+- Fixed work item loading so assignee discovery now queries TFS with `AreaPath + AssignedTo`, expands aliases such as `lmpereira` to `CMF\lmpereira`, and chunks work item batch reads in groups of 200 to respect TFS limits.
+- Reworked the dashboard item list into collapsed detail panels and made action availability repository-aware: the UI now detects existing branches by work item ID, hides branch creation when a matching branch already exists, and only enables draft PR creation when a branch is present.
+- Added work item and parent-work-item PR screening by combining relation-based PR links with repository branch/PR checks.
+- Fixed identity rendering so names with accents such as `Luís Pereira` are preserved correctly in the dashboard, with an extra defensive mojibake-repair layer for locally stored reviewer values.
+- Tightened dashboard action gating so branch creation is also blocked when the work item or its parent is already associated with a draft/completed PR in the target repository.
+- Optimized repository screening by caching the repository ref list once per load, scanning PRs only when a branch still needs PR detection, and reducing the dashboard refresh for the current sprint scenario from roughly 70-90 seconds to about 30-35 seconds in local validation.
+- Added dashboard state styling so each work item row/card now has a different background treatment based on the TFS work item state.
+- Added a `Hide Closed` dashboard toggle, wired through the load/filter/action round-trips, so reviewers can focus only on still-open tasks without losing their current filter context after save/branch/PR actions.
+- Tightened PR handling so the backend now blocks branch/PR actions when a work item already has an associated PR, and the UI labels those links generically as associated PRs instead of always calling them draft PRs.
+- Added visible work item selection checkboxes plus a bulk `Run Automatic TFS Flow for Selected` action that uses each item's saved or inferred plan, creates branches when needed, and skips items that already have associated PRs or still need planning.
+- Added editable planned-branch naming in the work-item plan form, including persistence of custom branch names across save/branch/PR actions and a generated-branch reference that can be restored by clearing the custom field and saving again.
+- Refined the bulk-selection UI so the select-all checkbox and per-item selection checkboxes are aligned with the card content instead of sitting in separate broken grid columns.
+- Added a global loading overlay for form submissions so long-running dashboard actions visibly gray out the page and show a spinner/status while waiting for TFS operations to complete.
+
+2026-04-27:
+
+- Switched the Microsoft 365 Copilot Desktop clipboard handoff from base64 command arguments to UTF-8 standard input, fixing failures with large proprietary work item prompts.
+- Fixed VS Code WSL remote launch targets by percent-encoding folder URIs, including `#` in workspace names such as `DocumentationPortal-#01`.
+- Added explicit branch validation after checkout before CM GPT handoff, and rewrote workspace state checks to use direct Git calls instead of fragile shell substitution.
+- Made dashboard flash messages transient by cleaning `message` and `level` from the browser URL after rendering, and added server-side truncation for long flash payloads.
+- Rejected the Microsoft 365 Copilot Desktop path as a valid pipeline executor because it cannot edit the local WSL repository without user intervention in the current integration.
+- Switched the default runtime provider to VS Code Copilot with automatic execution enabled and strict preparation-only mode disabled, so the CM GPT action now represents an automatic executor path.
+- Made the CM GPT-only model guard conditional on `Strict CM GPT Safety Mode`, added VS Code Copilot model suggestions in Settings, and set the local `.env` model to `GPT-4o` for temporary end-to-end testing.
+- Added persisted agent-result and push states, plus `Check Agent Result` and `Commit & Push` actions.
+- Changed the automatic flow so it no longer creates a draft PR immediately after branch creation. It launches the agent, waits for `agent-result.json`, commits and pushes green-lighted changes, then creates the draft PR.
+
+2026-04-28:
+
+- Fixed the automatic flow branch step by moving the push-required validation out of branch creation and into draft PR creation.
+- Improved bulk automatic-flow flash messages so item-level errors include the affected work item ID and detail instead of only aggregate counts.
+
+2026-05-18:
+
+- Added configurable VS Code workspace window behavior. The current environment defaults to `reuse`, while Settings can switch to `new` when a dedicated handoff window is preferable.
+- Added a durable automation orchestrator that resumes persisted automatic flows in the background, polls unfinished agent work after restarts, and provides a standalone `run_worker.py` entrypoint for future service deployment.
+- Added automation-runner settings for enablement, reconcile interval, continuous mode, and discovery interval.
+- Added continuous discovery support for open current-iteration tasks and dashboard visibility for runner/continuous-mode state.
+- Added formal PR-to-work-item linking during draft PR creation, preferring the parent work item and falling back to the task itself when no parent exists.
+- Backfilled the missing parent work item association for draft PR `#86667` linked to WI `151873`, using parent WI `150572`.
+- Recorded Microsoft Loop content ingestion as a planned future capability because implementation notes there may contain authoritative detail that is not present in the work item or formal specification.
+- Added lightweight dashboard status polling while visible automatic flows are still active, and changed stage summarization so a created PR wins over stale earlier agent-error state.
+- Simplified newly created draft PR descriptions to a reviewer-facing change summary plus the work item link, and preserved existing agent summaries when later error updates do not provide a replacement summary.
+
+2026-05-26:
+
+- Added final Markdown report generation for green-lighted agent results. Reports are stored under the configured reports folder using a parent/task folder name such as `149746 - Task 151996`.
+- Extended the agent result contract to include `final_report`, `spec_references`, `validation`, and `reviewer_notes` in addition to status, green light, summary, and changed files.
+- Added configurable `Initial Agent Prompt Template`, `CLI Command Template`, and `Final Reports Path` runtime settings.
+- Added provider options for VS Code Copilot, Codex CLI, Claude CLI, Custom CLI, and Microsoft 365 Copilot Desktop visibility. CLI providers require a command template and must write `agent-result.json`.
+- Added performance logging to `data/performance.log`, including TFS request timings and dashboard load phases.
+- Added a Settings overview panel with current portal, provider, runner status, performance log path, and section shortcuts.
+- Generated a real final report for WI `151996` at `data/reports/149746 - Task 151996/final-report.md` while validating the report writer.
+- Reduced dashboard initial-load latency by making the list summary-first: WIQL now returns candidate IDs, a lightweight batch fetches only list fields, and full details are deferred to operational actions.
+- Changed dashboard repository enrichment to avoid remote branch/PR scans during the list render. The list now uses local persisted state first; branch, agent, push, and PR actions still perform remote validation.
+- Moved current-iteration auto-resolution behind the active current-iteration filter so the dashboard does not call TFS team settings when that filter is off.
+- Cleared the portal iteration team in the local MVP configuration because the `Development` team currently returns no current iteration through the Work API. Manual iteration paths should be used for sprint narrowing until a reliable team iteration source is available.
+- Validated the performance improvement locally: blank initial load with current-iteration mode now returns in about `8 ms`, manual `Product\Gaivosa\Sprint 04` with closed items hidden returns in about `12 s`, and manual Sprint 04 including closed items returns in about `26 s`.
+
+2026-05-27:
+
+- Corrected the previous performance change because it hid work items when current-iteration filtering was enabled but no current iteration could be resolved.
+- Changed the dashboard to a paginated summary-first flow. The initial query requests only enough IDs and lightweight fields for the current page, with a default page size of 10.
+- Added lazy work item detail loading through `/work-items/{id}/details`. Opening a card now fetches full work item details, parent metadata, repository state, linked PR screening, and action forms only for that one item.
+- Updated the dashboard empty/current-iteration notice so unresolved current iteration no longer blocks assigned-task discovery.
+- Reworked the Settings top summary into a horizontal context strip instead of squeezing discovery, target, workspace, runtime, and the load action into one awkward grid row.
+- Validated locally: page 1 with 10 visible assigned tasks loaded in about `6.1 s`; opening one detailed work item loaded the full detail/action panel in about `5.6 s`; FastAPI template checks returned HTTP 200 for both dashboard and detail routes.
+- Improved work item detail rendering so Description, Acceptance Criteria, and Repro Steps show sanitized rich HTML instead of truncated plain-text previews. Images embedded in the TFS HTML now render in the dashboard, and image attachments are shown as preview tiles when available.
+- Added detail-state metadata so the collapsed card status and progress bar can be updated after the lazy detail load returns remote branch/PR state.
+- Fixed progress calculation so an existing associated PR always marks the Draft PR step as done, even if an old PR error is still stored locally.
+- Added a `/tfs-assets` authenticated proxy so embedded TFS images load through the dashboard using the configured TFS credentials instead of requiring the browser to fetch protected attachment URLs directly.
+- Improved the global loading overlay with action-specific progress steps for branch creation, agent launch, auto-flow, result checking, push, and draft PR creation.
+- Installed Codex CLI for local testing through npm and added a WSL shim at `/home/lmpereira/.local/bin/codex`. Because this install runs the Windows Codex executable, the CLI command template now uses the `{{workspace_unc_path}}` placeholder.
+- Configured the local MVP `.env` for `codex_cli` with model `gpt-5.5` and a non-interactive command template that runs `codex exec` with bypassed approvals/sandbox for end-to-end automation testing.
+- Replaced the Windows-backed Codex shim path with a native WSL Node/Codex install under `/home/lmpereira/.local/node/current` and `/home/lmpereira/.npm-global/bin/codex`.
+- Copied the current Codex auth into the WSL user `CODEX_HOME` and updated the local CLI command template to run native Codex against `{{workspace_path}}` instead of the UNC path.
+- Added persisted provider PID/log fields and provider-log failure detection. If a CLI provider exits without writing `agent-result.json`, the dashboard now records an agent-result error and no longer shows the item as an active flow.
+- Cleaned stale local automatic-flow states for WIs `152658`, `152421`, and `151120`, which were waiting for result files that could no longer appear.
+- Validated the native WSL Codex CLI in an isolated `/tmp/doc-automation-codex-smoke` repository: it created `smoke.txt` and a valid green-light `agent-result.json`.
+- Current environment note: DNS resolution for `tfs-product.cmf.criticalmanufacturing.com` failed during final dashboard verification, so the dashboard could not reload live work items in this session even though local status endpoints were working.
+- Fixed the automatic-flow retry path for failed agent runs. A work item with `agent_result_status=error` now relaunches the configured provider instead of repeatedly reading the old provider log.
+- The CLI launcher now removes stale `agent-result.json` and `agent-provider.log` before starting a new provider process, so retries cannot show a previous run's error as if it were current.
+- Launching a provider now resets the local agent result state to `waiting`, clears the previous agent error, and stores the current provider PID/log path for later diagnostics.
+- Reworked the CLI provider launcher to write an `agent-provider.sh` wrapper into the work item context directory, record a diagnostic header in `agent-provider.log`, and launch that wrapper from WSL bash.
+- Switched the WSL command runner from `sh -lc` to `bash -lc` because PID/job behavior differed under `sh` when called through `wsl.exe`.
+- Fixed PID capture by using a grouped `nohup ... & jobs -p | tail -n 1` launch. `$!` was empty when invoked through `wsl.exe`, and an ungrouped `&& ... &` could background the wrong command chain.
+- Validated the corrected wrapper launcher with a benign prompt in the `152658` context. It returned PID `7039` and wrote a log containing the diagnostic header plus the Codex CLI run output.
+- Added a guard in agent-result checking so CLI providers with `copilot_status=launched` but no stored PID are marked as an error instead of being repeatedly reset to `waiting` by the background worker.
+- Cleaned TFS PowerShell error handling so ANSI escape sequences and `Write-Error` prefixes no longer leak into the dashboard; DNS failures now show an actionable VPN/DNS message.
+
+- Made repeated commit/push handling idempotent for duplicate workers: if the expected WI commit is already HEAD, the push step reuses that commit instead of marking `No staged changes` as a failure.
+- Normalized the local WI `152658` state after duplicate workers raced: the branch was pushed at commit `dab690c575a39323f384125ea00ea02d629cafb4` and draft PR `#87233` was created.
+
+2026-05-28:
+
+- Reviewed PR `#87233` for WI `152658` and found that the documentation content matches the work item/spec intent, but the tutorial Mermaid `click` links resolve to missing local paths.
+- Hardened the agent handoff so repository instructions from `AGENTS.md`, `.github/copilot-instructions.md`, and `.agents/**/*.md` are copied into `.automation-context/copilot/<branch>/repo-instructions/` with an index file.
+- Extended the agent result contract with `instruction_files_read`. The dashboard now blocks green-lighted results when repository instruction files exist but the agent does not confirm reading them.
+- Added dashboard-managed post-agent validation before push/PR progression. The validation checks `git diff --check`, runs markdownlint when a local command is available, and validates local Markdown links plus Mermaid `click` targets in changed Markdown files.
+- Added a `needs_agent_fix` local state for green-lighted agent results that fail dashboard validation. These items stop automatic progression before push and surface the validation error in the dashboard.
+- Extended final reports with dashboard validation details and the repository instruction files reported by the agent.
+- Added a rendered final-report page at `/work-items/{id}/report`, linked from the work item detail panel.
+- Added a controlled rerun action in the work item detail panel. A rerun creates a fresh `-rerun-<timestamp>` branch, clears the local automation state for the new attempt, ignores older PR links only for that rerun, launches the automatic flow again, and stores rerun reports in a branch/timestamp-specific subfolder.
+
+2026-06-01:
+
+- Fixed the VS Code Copilot handoff after a run showed that the `code chat` prompt was being truncated in the chat UI. The launcher now sends the full prompt through stdin (`code chat ... -`) instead of passing the full Markdown body as a command-line argument.
+- Made the VS Code prompt self-contained by embedding the work item Markdown context directly in `prompt.md`, while still instructing the agent to read the adjacent HTML/JSON files and repository instruction package before doing any repository work.
+- Hardened custom-agent discovery by writing the generated `cmf-tfs-doc-automation.agent.md` file to the WSL profile, the Windows `~/.copilot/agents` profile, and the VS Code user-data prompts folder.
+- Extended the VS Code settings writer to include `chat.agentFilesLocations` for the generated agent directories, and the launch path now reapplies VS Code Copilot settings before starting a VS Code provider run.
+- The VS Code launcher now attaches the generated prompt/context files as `--add-file` entries and records their UNC paths in the handoff metadata.
+
+- Investigated the 152939 VS Code rerun issue and found a stale dashboard process still listening on port `8001` with the old handoff code. That process regenerated the old 2 KB prompt after the fix. Stopped the stale process and kept the active dashboard on port `8000`.
+- Reinforced the VS Code launcher to pass a short bootstrap prompt as the normal `code chat` argument and the complete handoff through stdin, matching the documented `code chat <prompt> -` pattern. The bootstrap explicitly tells Copilot to read the attached `prompt.md` and context package before commands or edits.
+- Added a reference-documentation package to the agent handoff. Detected `.docx`/`.docm`/`.doc` names are matched against the configured reference docs workspace, an index is written under `.automation-context/copilot/<branch>/reference-docs/index.md`, and readable `.docx`/`.docm` files are extracted to text files so the agent can inspect the spec without relying on binary document support.
+- Validated the spec discovery path with `CMF-NAV-2011-SRS-00783-Material-I-Feature-Group.docx`; it resolves to `/workspaces/Documentation/Requirements/CMF-NAV-2011-SRS-00783-Material-I-Feature-Group.docx` and produces a packaged text extract.
+- Changed Draft PR creation so newly created PR descriptions include the final automation report from the generated `final-report.md`, with a length cap and truncation note if needed.
+
+2026-06-02:
+
+- Investigated WI `152923` after the agent produced local changes and an `agent-result.json` with `status=completed` but `green_light=false`.
+- Found that the previous flow could treat `completed` as a ready state in some UI/continuation paths even when explicit green light was denied.
+- Fixed `read_agent_result`/service progression semantics so explicit `green_light=false` is respected. Local automation now treats only `green_light`, `ready_for_push`, or `success` as push-ready states; `completed` is no longer sufficient.
+- Added automatic agent repair support for active automatic flows. If the agent changed files but did not green-light the result, missed required repository instruction acknowledgements, or failed dashboard preflight validation, the runner can relaunch the configured provider once on the same dirty work branch.
+- The repair prompt reuses the existing context package, repository instruction package, reference-doc package, previous result, changed files, and dashboard validation failures. It asks the agent to fix the local changes and rewrite `agent-result.json`.
+- Added local state columns `agent_repair_count`, `agent_repair_last_started_at`, and `agent_repair_last_reason`, plus dashboard visibility for repair attempts and last repair reason.
+- Added preflight diagnostics before repair so failures such as broken local Markdown links or Mermaid click targets can be sent back to the agent instead of only stopping the flow.
+- Current repair cap is one automatic attempt per work item branch. If the repair cannot be launched or still fails, the item moves to `needs_agent_fix` and automatic progression is disabled until reviewer action or a controlled rerun.
+- Checked the next WI `152923` run and confirmed the repair flow did activate: the repair prompt included the missing instruction acknowledgements and the broken local link from the previous attempt.
+- The run exposed two follow-up hardening needs: duplicate repair launch protection and avoiding validation while VS Code Copilot is still rewriting `agent-result.json`. Added atomic repair reservation with the configured repair cap and a short result-file stability window before validation.
+- Added explicit repair reasons for invalid `agent-result.json` and for green-lighted results that do not list `changed_files`, because the dashboard commits only the files listed in the agent result.
+
+2026-06-03:
+
+- Fixed a VS Code handoff prompt issue where the agent was told to stop if the internal generated transport mode `cmf-tfs-doc-automation` was not visibly selected.
+- The functional agent/model contract now comes from dashboard Settings: `Agent Name` and `Model Name`. The generated VS Code transport mode is still used to deliver the handoff, but the prompt explicitly says it is not by itself a reason to stop.
+- The bootstrap prompt also names the configured Settings agent/model and tells the agent to use embedded stdin context if attached files are not visible in VS Code.
+- Investigated a follow-up WI `152923` automatic-flow run where nothing appeared to happen in VS Code. Local state was `copilot_status=launched`, `agent_result_status=waiting`, `auto_flow_enabled=1`, but `agent-result.json` was missing and the package prompt was still the pre-fix version.
+- Added stale VS Code wait detection: if a VS Code handoff is still waiting, no `agent-result.json` exists, and the launch is older than the configured grace window, a selected automatic flow regenerates the package and relaunches the VS Code chat instead of waiting indefinitely.
+- Fixed the state merge used by automatic-flow items so `copilot_prepared_at`, `agent_repair_count`, `agent_repair_last_started_at`, and `agent_repair_last_reason` are available to flow decisions and detail rendering. Without this, stale VS Code wait detection could not calculate the previous launch age.
+- Moved the generated agent context package out of `.git/copilot-context/...` and into repository-root `.automation-context/copilot/<branch>/...`. VS Code Copilot could fail to discover or read files under `.git`, while the root-level folder is visible as normal workspace content.
+- The dashboard now adds `/.automation-context/` to the target repository's local `.git/info/exclude` and rejects `.automation-context/...` entries in `changed_files`, keeping the package readable by the agent but out of commits.
+
+2026-06-11:
+
+- Switched the local MVP settings to the `codex_cli` provider with model `gpt-5.5` and `model_reasoning_effort="high"` for automated WSL execution tests.
+- Investigated WI `153571` after the provider failed with `nohup: failed to run command .../agent-provider.sh: No such file or directory`.
+- Root cause: the generated WSL provider wrapper existed, but it had Windows CRLF line endings. Linux interpreted the shebang as `/bin/sh\r`, which surfaces as a misleading `No such file or directory` error.
+- Fixed `_run_wsl_script` so stdin payloads are sent as UTF-8 bytes when writing WSL files. This prevents Python/Windows text-mode newline conversion from introducing CRLF into scripts written inside WSL.
+- Added a launcher smoke test with a fake CLI provider. The regenerated `agent-provider.sh` now has LF line endings, launches via `nohup`, writes `agent-result.json`, and records the diagnostic provider header in `agent-provider.log`.
+- Confirmed the WI `153571` branch was based on `origin/11.2/dev`, so the original 10.2 vs 11.2 base change did not cause the provider failure.
+- Noted a branch naming inconsistency for WI `153571`: the saved branch was `fix/153571-doc-provide-the-capability-to-unterminate-a-material-that-is-in-an-inval`, while the selected base branch would normally infer `11.2/fix/153571-doc-provide-the-capability-to-unterminate-a-material-that-is-in-an-inval`. This likely came from a manual planned-branch override and should be handled separately if strict branch naming is required before PR creation.
+- Hardened automatic-flow retry behavior for CLI providers. If a CLI provider failed before creating `agent-result.json`, the next selected automatic-flow run now relaunches the provider instead of treating the stale provider-log error as a repairable agent result.
+- Investigated the next WI `153571` provider failure after the CRLF fix. The wrapper executed, but Codex CLI failed with `refresh_token_reused`, `token_expired`, and `401 Unauthorized`.
+- Confirmed the same failure with a minimal `codex exec` smoke prompt in WSL, while `codex login status` still reported stored ChatGPT auth. This means the saved WSL Codex auth exists but cannot refresh and must be recreated with `codex logout` followed by `codex login`.
+- Added provider-log summarization so dashboard errors no longer include large prompt/context blocks. Known Codex auth failures now render as a concise actionable message while the full `agent-provider.log` remains on disk for diagnostics.

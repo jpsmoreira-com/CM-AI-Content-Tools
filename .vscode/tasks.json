@@ -1,0 +1,43 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "TFS Automation: Install Dependencies",
+      "type": "shell",
+      "command": "python -m pip install -r requirements.txt",
+      "problemMatcher": []
+    },
+    {
+      "label": "TFS Automation: Run Dashboard",
+      "type": "shell",
+      "command": "python -m uvicorn main:app --host 0.0.0.0 --port ${input:dashboardPort}",
+      "isBackground": false,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": false
+      }
+    },
+    {
+      "label": "TFS Automation: Run Background Worker",
+      "type": "shell",
+      "command": "python run_worker.py",
+      "isBackground": false,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": false
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "dashboardPort",
+      "type": "promptString",
+      "description": "Dashboard port exposed by the devcontainer",
+      "default": "8000"
+    }
+  ]
+}

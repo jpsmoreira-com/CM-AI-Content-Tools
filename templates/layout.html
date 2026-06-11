@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ request.url_for('static', path='site.css') }}">
+</head>
+<body>
+    <header class="shell-header">
+        <div class="header-row">
+            <div>
+                <p class="eyebrow">Documentation Automation</p>
+                <h1>{{ page_title }}</h1>
+            </div>
+            <nav class="top-nav" aria-label="Primary">
+                <a href="{{ request.url_for('dashboard') }}" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
+                <a href="{{ request.url_for('settings_page') }}" class="{% if active_page == 'settings' %}active{% endif %}">Settings</a>
+            </nav>
+        </div>
+    </header>
+    <main class="page-shell">
+        {% block content %}{% endblock %}
+    </main>
+    <div class="loading-overlay" id="loading-overlay" hidden>
+        <div class="loading-overlay-card" role="status" aria-live="polite" aria-busy="true">
+            <span class="loading-spinner" aria-hidden="true"></span>
+            <strong id="loading-overlay-title">Working...</strong>
+            <span id="loading-overlay-text">Please wait while the action completes.</span>
+            <ol class="loading-step-list" id="loading-overlay-steps"></ol>
+        </div>
+    </div>
+    <script>
+        (function () {
+            const overlay = document.getElementById("loading-overlay");
+            const title = document.getElementById("loading-overlay-title");
+            const text = document.getElementById("loading-overlay-text");
+            const stepsElement = document.getElementById("loading-overlay-steps");
+            let progressTimer = null;
+            if (!overlay || !title || !text || !stepsElement) {
+                return;
+            }
+
+            const stepProfiles = [
+                {
+                    match: "/work-items/auto-flow",
+                    steps: [
+                        "Submitting selected work items",
+                        "Checking saved branch plans and existing PRs",
+                        "Creating or detecting work branches",
+                        "Preparing agent context packages",
+                        "Launching the configured executor",
+                        "Saving automation state",
+                        "Returning the updated dashboard",
+                    ],
+                },
+                {
+                    match: "/branch",
+                    steps: [
+                        "Reading the work item",
+                        "Resolving the target repository",
+                        "Checking the base branch",
+                        "Creating or detecting the work branch",
+                        "Saving branch state",
+                    ],
+                },
+                {
+                    match: "/copilot",
+                    steps: [
+                        "Checking the workspace branch",
+                        "Building the work item context package",
+                        "Writing prompt and repository instructions",
+                        "Launching the configured executor",
+                        "Saving agent handoff state",
+                    ],
+                },
+                {
+                    match: "/rerun",
+                    steps: [
+                        "Preparing a new rerun branch",
+                        "Clearing previous local automation state",
+                        "Creating the work branch",
+                        "Building a fresh agent context package",
+                        "Launching the configured executor",
+                        "Saving rerun automation state",
+                    ],
+                },
+                {
+                    match: "/commit-push",
+                    steps: [
+                        "Reading the agent result",
+                        "Validating changed files",
+                        "Checking local documentation links",
+                        "Creating the commit",
+                        "Pushing the work branch",
+                        "Saving push state",
+                    ],
+                },
+                {
+                    match: "/draft-pr",
+                    steps: [
+                        "Resolving repository state",
+                        "Preparing the draft PR summary",
+                        "Creating the draft PR",
+                        "Linking the work item",
+                        "Adding the required reviewer",
+                    ],
+                },
+                {
+                    match: "/agent-result",
+                    steps: [
+                        "Checking the expected result file",
+                        "Reading agent output",
+                        "Validating green-light status",
+                        "Checking repository instruction acknowledgement",
+                        "Running dashboard-managed validation",
+                        "Saving report state",
+                    ],
+                },
+            ];
+
+            function humanizeLabel(label) {
+                const value = (label || "").trim();
+                if (!value) {
+                    return "Working";
+                }
+                return value;
+            }
+
+            function stepsForForm(form) {
+                const action = String(form.getAttribute("action") || "");
+                for (const profile of stepProfiles) {
+                    if (action.includes(profile.match)) {
+                        return profile.steps;
+                    }
+                }
+                if (form.method && form.method.toLowerCase() === "get") {
+                    return [
+                        "Submitting filters",
+                        "Loading configuration",
+                        "Querying lightweight work item fields",
+                        "Rendering the page",
+                    ];
+                }
+                return [
+                    "Submitting request",
+                    "Running server-side validation",
+                    "Calling TFS or local workspace services",
+                    "Saving state",
+                    "Returning the updated page",
+                ];
+            }
+
+            function renderSteps(steps, activeIndex) {
+                stepsElement.innerHTML = "";
+                steps.forEach(function (step, index) {
+                    const item = document.createElement("li");
+                    item.textContent = step;
+                    if (index < activeIndex) {
+                        item.className = "is-done";
+                    } else if (index === activeIndex) {
+                        item.className = "is-active";
+                    }
+                    stepsElement.appendChild(item);
+                });
+            }
+
+            function showOverlay(label, steps) {
+                if (progressTimer) {
+                    window.clearInterval(progressTimer);
+                    progressTimer = null;
+                }
+                title.textContent = humanizeLabel(label);
+                text.textContent = "The dashboard is running the server-side workflow. The page will update when it finishes.";
+                const progressSteps = steps && steps.length ? steps : ["Starting request", "Waiting for server response"];
+                let activeIndex = 0;
+                renderSteps(progressSteps, activeIndex);
+                progressTimer = window.setInterval(function () {
+                    activeIndex = Math.min(activeIndex + 1, progressSteps.length - 1);
+                    renderSteps(progressSteps, activeIndex);
+                }, 1800);
+                overlay.hidden = false;
+                document.body.classList.add("is-loading");
+            }
+
+            window.addEventListener("pageshow", function () {
+                if (progressTimer) {
+                    window.clearInterval(progressTimer);
+                    progressTimer = null;
+                }
+                overlay.hidden = true;
+                document.body.classList.remove("is-loading");
+            });
+
+            function clearTransientFlashParams() {
+                if (!window.history || !window.history.replaceState) {
+                    return;
+                }
+                const url = new URL(window.location.href);
+                const hadTransientParams = url.searchParams.has("message");
+                const hadLevelParam = url.searchParams.has("level");
+                url.searchParams.delete("message");
+                url.searchParams.delete("level");
+                if (!hadTransientParams && !hadLevelParam) {
+                    return;
+                }
+                const cleanUrl = url.pathname + (url.search ? url.search : "") + url.hash;
+                window.history.replaceState({}, document.title, cleanUrl);
+            }
+
+            clearTransientFlashParams();
+
+            document.addEventListener("submit", function (event) {
+                const form = event.target;
+                if (!(form instanceof HTMLFormElement)) {
+                    return;
+                }
+                const submitter = event.submitter;
+                const label = submitter && submitter.textContent ? submitter.textContent : "Working...";
+                showOverlay(label, stepsForForm(form));
+            }, true);
+        }());
+    </script>
+</body>
+</html>

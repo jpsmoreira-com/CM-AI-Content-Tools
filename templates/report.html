@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<section class="panel report-panel">
+    <div class="report-header">
+        <div>
+            <p class="eyebrow">Final Report</p>
+            <h2>Work Item {{ work_item_id }}</h2>
+            <p class="muted">Stored in <code>{{ report_path }}</code></p>
+        </div>
+        <a class="button secondary" href="{{ request.url_for('dashboard') }}?portal={{ selected_portal }}">Back to Dashboard</a>
+    </div>
+    {% if error %}
+    <div class="alert error">{{ error }}</div>
+    {% else %}
+    <article class="report-content">
+        {{ report_html | safe }}
+    </article>
+    {% endif %}
+</section>
+{% endblock %}
