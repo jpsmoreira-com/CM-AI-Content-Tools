@@ -11,6 +11,10 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote, unquote, urlencode, urlparse
 
 import requests
+try:
+    from requests_ntlm import HttpNtlmAuth
+except ImportError:  # pragma: no cover - exercised only when optional devcontainer auth dependency is absent.
+    HttpNtlmAuth = None  # type: ignore[assignment]
 
 from .telemetry import log_performance
 
@@ -110,6 +114,55 @@ def chunked(values: List[int], size: int = 200) -> Iterable[List[int]]:
         yield values[index : index + size]
 
 
+def git_credential_values(url: str, *, timeout_seconds: int = 10) -> Dict[str, str]:
+    git = shutil.which("git")
+    if not git:
+        raise TfsApiError("Git executable was not found. Install Git or use PAT authentication.")
+
+    try:
+        result = subprocess.run(
+            [git, "credential", "fill"],
+            input=f"url={url}\n\n",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        parsed = urlparse(url)
+        raise TfsApiError(
+            "Git credential lookup timed out after "
+            f"{timeout_seconds}s for {parsed.netloc}. "
+            "Refresh the container Git credentials or switch this portal to PAT authentication."
+        ) from exc
+    if result.returncode != 0:
+        parsed = urlparse(url)
+        detail = result.stderr.strip() or result.stdout.strip() or "Git credential lookup failed."
+        raise TfsApiError(f"Git credential lookup failed for {parsed.netloc}: {detail}")
+
+    values: Dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+
+    username = values.get("username", "")
+    password = values.get("password", "")
+    if not password:
+        parsed = urlparse(url)
+        raise TfsApiError(
+            f"No Git credential password/token was found for {parsed.netloc}. "
+            "Run a Git command against this repository first or configure a credential helper."
+        )
+
+    return {
+        "username": username,
+        "password": password,
+    }
+
+
 def parse_pull_request_relation(base_url: str, relation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     relation_url = str(relation.get("url", "") or "").strip()
     if "PullRequestId" not in relation_url:
@@ -185,7 +238,12 @@ def powershell_json_request(
     body_json: Optional[str] = None,
     content_type: str = "application/json",
 ) -> Any:
-    shell = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if not shell:
+        raise TfsApiError(
+            "Windows Credentials authentication requires PowerShell, but PowerShell was not found in this runtime. "
+            "Use Git Credentials or PAT authentication when running from the devcontainer."
+        )
     body_block = ""
     invoke_args = f'-Uri "{url}" -Method {method.upper()} -Headers @{{ Accept = \'application/json\' }}'
     if body_json is not None:
@@ -236,7 +294,12 @@ try {{
 
 
 def powershell_binary_request(url: str) -> Dict[str, Any]:
-    shell = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if not shell:
+        raise TfsApiError(
+            "Windows Credentials authentication requires PowerShell, but PowerShell was not found in this runtime. "
+            "Use Git Credentials or PAT authentication when running from the devcontainer."
+        )
     script = f"""
 $ProgressPreference = 'SilentlyContinue'
 $ErrorActionPreference = 'Stop'
@@ -306,6 +369,7 @@ class TfsClient:
         self.auth_mode = auth_mode
         self.pat = pat.strip()
         self.timeout_seconds = timeout_seconds
+        self._git_auth: Any = None
 
     def build_url(self, path: str, **params: Any) -> str:
         query = {"api-version": self.api_version}
@@ -328,12 +392,15 @@ class TfsClient:
     def request_json(self, method: str, url: str, body: Any = None, *, content_type: str = "application/json") -> Any:
         started_at = time.perf_counter()
         request_failed = False
+        if self.auth_mode in {"pat", "git_credentials"}:
+            auth = None
+            if self.auth_mode == "git_credentials":
+                auth = self.request_auth()
+            headers = {"Accept": "application/json"}
         if self.auth_mode == "pat":
             token = base64.b64encode(f":{self.pat}".encode("ascii")).decode("ascii")
-            headers = {
-                "Authorization": f"Basic {token}",
-                "Accept": "application/json",
-            }
+            headers["Authorization"] = f"Basic {token}"
+        if self.auth_mode in {"pat", "git_credentials"}:
             if body is not None:
                 headers["Content-Type"] = content_type
             try:
@@ -341,6 +408,7 @@ class TfsClient:
                     method.upper(),
                     url,
                     headers=headers,
+                    auth=auth,
                     json=body if body is not None else None,
                     timeout=self.timeout_seconds,
                 )
@@ -349,9 +417,18 @@ class TfsClient:
                 request_failed = True
                 detail = response.text[:1200]
                 raise TfsApiError(f"{exc}\n{detail}") from exc
+            except requests.Timeout as exc:
+                request_failed = True
+                relative_url = url.split("_apis/")[-1]
+                raise TfsApiError(
+                    "TFS request timed out after "
+                    f"{self.timeout_seconds}s while calling {relative_url}. "
+                    "Check VPN/network connectivity from the dashboard runtime."
+                ) from exc
             except requests.RequestException as exc:
                 request_failed = True
-                raise TfsApiError(str(exc)) from exc
+                relative_url = url.split("_apis/")[-1]
+                raise TfsApiError(f"TFS request failed while calling {relative_url}: {exc}") from exc
             finally:
                 log_performance(
                     "tfs.request",
@@ -387,15 +464,19 @@ class TfsClient:
     def get_binary(self, url: str) -> Dict[str, Any]:
         started_at = time.perf_counter()
         request_failed = False
-        if self.auth_mode == "pat":
-            token = base64.b64encode(f":{self.pat}".encode("ascii")).decode("ascii")
+        if self.auth_mode in {"pat", "git_credentials"}:
+            headers = {"Accept": "*/*"}
+            auth = None
+            if self.auth_mode == "pat":
+                token = base64.b64encode(f":{self.pat}".encode("ascii")).decode("ascii")
+                headers["Authorization"] = f"Basic {token}"
+            if self.auth_mode == "git_credentials":
+                auth = self.request_auth()
             try:
                 response = requests.get(
                     url,
-                    headers={
-                        "Authorization": f"Basic {token}",
-                        "Accept": "*/*",
-                    },
+                    headers=headers,
+                    auth=auth,
                     timeout=self.timeout_seconds,
                 )
                 response.raise_for_status()
@@ -403,9 +484,18 @@ class TfsClient:
                     "content_type": response.headers.get("Content-Type") or "application/octet-stream",
                     "content": response.content,
                 }
+            except requests.Timeout as exc:
+                request_failed = True
+                relative_url = url.split("_apis/")[-1]
+                raise TfsApiError(
+                    "TFS asset request timed out after "
+                    f"{self.timeout_seconds}s while calling {relative_url}. "
+                    "Check VPN/network connectivity from the dashboard runtime."
+                ) from exc
             except requests.RequestException as exc:
                 request_failed = True
-                raise TfsApiError(str(exc)) from exc
+                relative_url = url.split("_apis/")[-1]
+                raise TfsApiError(f"TFS asset request failed while calling {relative_url}: {exc}") from exc
             finally:
                 log_performance(
                     "tfs.asset",
@@ -445,6 +535,19 @@ class TfsClient:
 
     def patch_json(self, url: str, body: Any, *, content_type: str = "application/json-patch+json") -> Any:
         return self.request_json("PATCH", url, body, content_type=content_type)
+
+    def request_auth(self) -> Any:
+        if self.auth_mode != "git_credentials":
+            return None
+        if HttpNtlmAuth is None:
+            raise TfsApiError("The 'requests-ntlm' package is required for Git Credentials authentication.")
+        if not self._git_auth:
+            credentials = git_credential_values(
+                f"{self.base_url}/{self.project}/_git/{self.repository}",
+                timeout_seconds=min(10, max(5, int(self.timeout_seconds))),
+            )
+            self._git_auth = HttpNtlmAuth(credentials["username"], credentials["password"])
+        return self._git_auth
 
     def resolve_repository(self) -> Dict[str, Any]:
         payload = self.get_json(self.build_url("git/repositories")) or {}

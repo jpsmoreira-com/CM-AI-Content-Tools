@@ -8,48 +8,58 @@ The goal of this MVP is to create an LLM-assisted pipeline, using the tools avai
 
 ## 2. MVP Goal
 
-Create an isolated application, based on a copy of the Cherry Picks dashboard, that can:
+Create a centralized Content AI automation application that can:
 
 1. Read tasks assigned to the Content team from TFS.
 2. Present a filterable list of work items that may have documentation impact.
-3. Classify each work item by likely documentation need.
-4. Allow manual selection of candidates.
-5. In a later MVP phase, prepare one branch per selected work item for LLM-assisted documentation changes.
+3. Allow manual selection of candidates or continuous background discovery.
+4. Prepare one branch per selected work item for LLM-assisted documentation changes.
+5. Launch an approved provider against the selected work branch.
+6. Wait for a green-lighted agent result.
+7. Commit, push, and create a draft PR with the required reviewer and linked work item.
+8. Provide read-only Cherry Pick propagation analysis from the same dashboard.
 
-The first phase must prioritize human control, traceability, and low operational risk.
+The MVP prioritizes human control, traceability, durable background execution, and low operational risk.
 
 ## 3. Initial Non-Goals
 
-The initial MVP must not:
+The MVP must not:
 
-- create PRs automatically without human approval;
 - merge or cherry-pick changes;
 - update work items in TFS;
 - publish documentation;
 - run LLM-generated changes directly in shared branches;
 - assume that every work item needs documentation.
+- create final or published PRs; draft PRs are allowed only after a selected automatic flow has a valid green-lighted agent result and the dashboard has pushed the work branch.
 
-## 4. Cherry Picks Dashboard Reuse
+## 4. Cherry Picks Dashboard Integration
 
-The existing dashboard already provides useful components:
+The previous Cherry Picks dashboard provided useful components:
 
 - TFS/Azure DevOps Server client;
-- Windows Credentials and PAT authentication support;
+- Windows Credentials, PAT, and Git-credential-oriented authentication patterns;
 - portal/repository configuration;
 - PR and work item reads;
 - simple Streamlit UI for internal operations.
 
-The new project should gradually extract these responsibilities into clearer modules:
+The current project keeps the old Streamlit dashboard as a reference and exposes the useful propagation logic as a FastAPI/Jinja page:
 
 ```text
 tfs-doc-automation-mvp
-  app.py                  inherited UI entry point, to be refactored
-  tfs_dashboard.py        inherited TFS client, to be split into adapters
+  doc_automation/
+    cherry_picks.py       read-only propagation analysis service
+    tfs_client.py         shared TFS/Azure DevOps Server client
+    services.py           application service layer
+    web.py                FastAPI routes
+  templates/
+    cherry_picks.html     integrated Cherry Picks page
   config/
-    tfs_dashboard.json    initial portal configuration
+    tfs_dashboard.json    portal configuration
   docs/
     technical-design.md
 ```
+
+The integrated Cherry Pick page is read-only. It analyzes PR propagation across the configured branch chain but does not create branches, PRs, work item updates, or cherry-picks.
 
 ## 5. Framework Decision
 
@@ -70,6 +80,8 @@ Backend: FastAPI
 Persistence: SQLite
 Integration: TFS/Azure DevOps Server REST API
 Runtime configuration: .env
+Background execution: embedded orchestrator plus run_worker.py for service-style execution
+Agent providers: VS Code Copilot, Codex CLI, Claude CLI, or custom CLI command templates
 ```
 
 If the project later needs a richer client-side experience, the next likely step is:
@@ -81,21 +93,24 @@ Jobs: Celery/RQ/APScheduler or an internal equivalent
 Storage: SQLite for MVP, SQL Server/PostgreSQL for operational use
 ```
 
-## 6. Proposed Functional Flow
+## 6. Functional Flow
 
 ```mermaid
 flowchart TD
     A["Select portal and filter mode"] --> B["Read assigned tasks from TFS"]
-    B --> C["Normalize relevant fields"]
-    C --> D["Classify documentation impact"]
-    D --> E["Show candidates in the dashboard"]
-    E --> F["User approves candidates"]
-    F --> G["Create one branch per work item"]
-    G --> H["Prepare LLM context"]
-    H --> I["LLM suggests changes"]
-    I --> J["Run local validations"]
-    J --> K["User reviews changes"]
-    K --> L["Create PR after approval"]
+    B --> C["Show paginated candidate cards"]
+    C --> D["User selects items or continuous mode discovers eligible tasks"]
+    D --> E["Create or detect work branch"]
+    E --> F["Generate context package in .automation-context"]
+    F --> G["Launch configured provider"]
+    G --> H["Agent edits branch and writes agent-result.json"]
+    H --> I{"Green light and validation pass?"}
+    I -- "No" --> J["Repair once or stop as needs_agent_fix"]
+    I -- "Yes" --> K["Write final report"]
+    K --> L["Commit and push listed files"]
+    L --> M["Create draft PR"]
+    M --> N["Link parent work item and add required reviewer"]
+    N --> O["Reviewer validates and publishes manually"]
 ```
 
 ## 7. Components
@@ -221,6 +236,51 @@ This adapter can evolve to use:
 
 Manual prompt generation is useful for diagnosis, but it is not a valid implementation of the automated pipeline because it does not remove the reviewer from repetitive execution work.
 
+### 7.4.1 Context Capture Engine
+
+The pipeline includes a rich context capture step inspired by the standalone `ado-capture` prototype.
+
+Before launching the configured provider, the dashboard generates a capture package under:
+
+```text
+.automation-context/copilot/<branch>/capture/
+```
+
+The package includes:
+
+- `summary.md` with the captured work item tree and PR overview;
+- `INSTRUCTIONS.md` with an evidence-driven playbook for the agent;
+- `manifest.json` with a machine-readable index;
+- one Markdown file per captured work item, including comments and legacy history;
+- one folder per linked PR, including metadata, commits, review comments, changed files, and a local diff when a matching clone is available.
+
+The capture root is the selected work item's parent when one exists, otherwise the selected work item itself. This lets the agent inspect the broader user story or bug, sibling DOC tasks, linked implementation PRs, and review discussion before editing.
+
+Capture failures are non-fatal. If the rich package cannot be generated, the pipeline writes a small capture error package and continues with the base work item context. The agent must record missing capture evidence in reviewer notes.
+
+The capture step is configurable from Settings:
+
+- enable or disable rich capture;
+- choose `parent` or `task` root mode;
+- set the maximum number of work items to walk;
+- enable or disable local PR diff capture;
+- configure workspace scan roots used to discover local clones for PR diffs.
+
+The agent result contract includes evidence fields:
+
+```json
+{
+  "capture_files_read": ["capture/summary.md"],
+  "work_items_reviewed": [123456],
+  "prs_reviewed": [7890],
+  "diffs_reviewed": ["capture/pullrequests/PR-7890/diff.patch"]
+}
+```
+
+These fields are copied into the final report so reviewers can understand which captured evidence informed the draft.
+
+The work item detail panel exposes a read-only `Context Package` viewer after a provider handoff exists. The viewer reads the generated package from `.automation-context/copilot/<branch>/capture/` and lets reviewers inspect `summary.md`, `INSTRUCTIONS.md`, and `manifest.json` without opening the target repository manually.
+
 ### 7.5 Validation Runner
 
 Responsible for running checks before any PR is created:
@@ -307,6 +367,44 @@ Current uses:
 - default reviewer identity;
 - reviewer override mapping when work item identities need to resolve to specific PR reviewers.
 
+### 7.8.1 Managed Agent Assets
+
+Reusable Content AI instructions, skills, and agent assets are installed into target repositories under:
+
+```text
+.agents/content-ai/
+```
+
+The sync process never overwrites a target repository root `AGENTS.md`. Repository-owned instructions remain authoritative for that repository. Managed shared assets live in the namespaced `.agents/content-ai/` folder and are referenced by the generated context package and prompts.
+
+The sync source is the centralized `CM-AI-Content-Skills` repository:
+
+```text
+AGENTS.md
+ai/manifest.json
+ai/skills/
+ai/agents/
+ai/instructions/
+```
+
+The sync script writes `.agents/content-ai/install-manifest.json` with copied file checksums and adds `/.agents/content-ai/` to `.git/info/exclude` so the assets remain local runtime material by default.
+
+Target devcontainers can call `scripts/devcontainer-bootstrap.sh` to clone or update the central asset repository, install the pipeline dependencies, create a local `tfs-autonomous-pipeline` wrapper, and sync managed assets into the current workspace.
+
+### 7.9 Cherry Pick Propagation Analysis
+
+The Cherry Pick page is a read-only component inside the same FastAPI dashboard. It reuses the selected portal, repository, branch chain, authentication mode, lookback window, and work item verification setting.
+
+Responsibilities:
+
+- fetch recent PRs from each branch in the configured branch chain;
+- group related PRs by linked work items, with branch-name fallback when work item links are missing;
+- show whether propagation to later branches is missing, open, abandoned, or done;
+- filter by scope, status, branch, and sort order;
+- avoid all write operations.
+
+This component keeps the previous Cherry Pick dashboard workflow available without requiring a separate Streamlit server or a separate devcontainer task.
+
 ## 8. Dashboard Work Item States
 
 Suggested internal states for the MVP:
@@ -354,10 +452,20 @@ Baseline rules:
 - sanitize work item descriptions before building prompts if sensitive fields are present;
 - keep auditable logs of decisions;
 - create branches only in explicitly configured repositories;
-- do not push or create PRs without an explicit human action;
+- do not push or create draft PRs unless the item was explicitly selected or started by continuous mode and the agent result passes the dashboard contract;
 - allow dry-run mode for all destructive or external operations.
 
 ## 11. MVP Roadmap
+
+The original phases below remain useful as planning vocabulary, but the current implementation has already advanced through branch creation, provider handoff, durable background reconciliation, validation, push, draft PR creation, final reports, controlled reruns, and the integrated Cherry Pick read-only page.
+
+Current next priorities:
+
+- improve Settings UX by grouping automation, provider, repository, reviewer, and Cherry Pick configuration more clearly;
+- add Microsoft Loop context ingestion;
+- harden the dedicated worker/service deployment shape;
+- improve observability and retry/backoff around TFS, Git, and provider failures;
+- add richer rules-based documentation impact classification.
 
 ### Phase 1 - Discovery And Triage
 

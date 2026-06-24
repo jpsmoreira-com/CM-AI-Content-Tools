@@ -13,6 +13,12 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode, urljoin, urlparse
 
 from .branching import WORK_TYPES, merge_branch_plan, normalize_branch_name, version_prefix_from_branch
+from .cherry_picks import (
+    SCOPE_FILTERS,
+    SORT_OPTIONS,
+    STATUS_FILTERS,
+    build_cherry_pick_context,
+)
 from .copilot import (
     CopilotIntegrationError,
     commit_and_push_agent_changes,
@@ -24,11 +30,13 @@ from .copilot import (
     prepare_cm_gpt_handoff,
     read_agent_result,
     read_agent_provider_status,
+    read_wsl_text_file,
     validate_agent_changes_for_push,
     wsl_path_to_unc_path,
 )
 from .config import (
     AUTH_OPTIONS,
+    CONTEXT_CAPTURE_ROOT_MODE_OPTIONS,
     COPILOT_PERMISSION_LEVEL_OPTIONS,
     COPILOT_PROVIDER_OPTIONS,
     COPILOT_VSCODE_WINDOW_MODE_OPTIONS,
@@ -43,6 +51,7 @@ from .config import (
     save_runtime_settings as save_runtime_settings_file,
     save_vscode_settings,
 )
+from .context_capture import build_capture_error_package, build_context_capture_package
 from .storage import (
     get_work_item_states,
     init_storage,
@@ -1027,6 +1036,7 @@ class AutomationService:
             "copilot_permission_level_options": COPILOT_PERMISSION_LEVEL_OPTIONS,
             "copilot_provider_options": COPILOT_PROVIDER_OPTIONS,
             "copilot_vscode_window_mode_options": COPILOT_VSCODE_WINDOW_MODE_OPTIONS,
+            "context_capture_root_mode_options": CONTEXT_CAPTURE_ROOT_MODE_OPTIONS,
         }
 
     def _derive_vscode_read_access_folders(
@@ -1123,8 +1133,14 @@ class AutomationService:
         project: str,
         repository: str,
     ) -> TfsClient:
+        runtime_settings = load_runtime_settings()
         pat = self._get_pat(portal)
-        auth_mode = "pat" if portal["auth_mode"] == "PAT" else "default_credentials"
+        if portal["auth_mode"] == "PAT":
+            auth_mode = "pat"
+        elif portal["auth_mode"] == "Git Credentials":
+            auth_mode = "git_credentials"
+        else:
+            auth_mode = "default_credentials"
         if portal["auth_mode"] == "PAT" and not pat:
             raise ServiceError("This portal uses PAT authentication. Enter a PAT before loading work items.")
         return TfsClient(
@@ -1134,7 +1150,86 @@ class AutomationService:
             api_version=portal["api_version"],
             auth_mode=auth_mode,
             pat=pat,
+            timeout_seconds=int(runtime_settings.get("tfs_request_timeout_seconds") or 15),
         )
+
+    def load_cherry_pick_dashboard(
+        self,
+        *,
+        portal_name: str,
+        load: bool,
+        lookback_days: Optional[int] = None,
+        max_prs_per_branch: Optional[int] = None,
+        scope: str = "All",
+        status: str = "All",
+        branch: str = "All",
+        sort_by: str = "Severity",
+        descending: bool = False,
+    ) -> Dict[str, Any]:
+        config = load_app_config()
+        portal_names = get_portal_names(config)
+        selected_portal = portal_name if portal_name in portal_names else config["DEFAULT_PORTAL"]
+        portal = get_portal_config(config, selected_portal)
+        branch_chain = list(portal.get("branch_chain") or [])
+        clean_scope = scope if scope in SCOPE_FILTERS else "All"
+        clean_status = status if status in STATUS_FILTERS else "All"
+        clean_branch = branch if branch == "All" or branch in branch_chain else "All"
+        clean_sort = sort_by if sort_by in SORT_OPTIONS else "Severity"
+        selected_lookback_days = max(0, int(lookback_days if lookback_days is not None else portal.get("lookback_days") or 7))
+        selected_max_prs = max(1, min(500, int(max_prs_per_branch if max_prs_per_branch is not None else portal.get("max_prs_per_branch") or 150)))
+
+        context: Dict[str, Any] = {
+            "portal_names": portal_names,
+            "selected_portal": selected_portal,
+            "portal": portal,
+            "branch_chain": branch_chain,
+            "lookback_days": selected_lookback_days,
+            "max_prs_per_branch": selected_max_prs,
+            "scope": clean_scope,
+            "status_filter": clean_status,
+            "branch_filter": clean_branch,
+            "sort_by": clean_sort,
+            "descending": bool(descending),
+            "scope_options": SCOPE_FILTERS,
+            "status_options": STATUS_FILTERS,
+            "sort_options": SORT_OPTIONS,
+            "branch_options": ["All", *branch_chain],
+            "loaded": bool(load),
+            "rows": [],
+            "summary": {"total": 0, "missing": 0, "open": 0, "abandoned": 0, "done": 0},
+            "unfiltered_summary": {"total": 0, "missing": 0, "open": 0, "abandoned": 0, "done": 0},
+            "pull_request_count": 0,
+            "ignored_pull_request_count": 0,
+            "ignored_label_pull_request_count": 0,
+            "ignored_abandoned_pull_request_count": 0,
+            "cherry_pick_skip_labels": list(portal.get("cherry_pick_skip_labels") or []),
+            "current_user": {},
+            "repository_name": str(portal.get("repository") or ""),
+        }
+        if not load:
+            return context
+
+        client = self._build_tfs_client(
+            portal,
+            project=portal["project"],
+            repository=portal["repository"],
+        )
+        cherry_context = build_cherry_pick_context(
+            client=client,
+            branch_chain=branch_chain,
+            lookback_days=selected_lookback_days,
+            max_prs_per_branch=selected_max_prs,
+            verify_work_items_via_api=bool(portal.get("verify_work_items_via_api")),
+            scope=clean_scope,
+            status=clean_status,
+            branch=clean_branch,
+            sort_by=clean_sort,
+            descending=bool(descending),
+            skip_labels=list(portal.get("cherry_pick_skip_labels") or []),
+        )
+        context.update(cherry_context)
+        context["repository_name"] = str(cherry_context.get("repository_name") or portal.get("repository") or "")
+        return context
 
     def _decorate_work_item(
         self,
@@ -1835,6 +1930,62 @@ class AutomationService:
             "report_html": render_basic_markdown(markdown_text),
         }
 
+    def get_context_capture_package(
+        self,
+        *,
+        portal_name: str,
+        work_item_id: int,
+        selected_file: str = "summary",
+    ) -> Dict[str, Any]:
+        config = load_app_config()
+        runtime_settings = load_runtime_settings()
+        portal_names = get_portal_names(config)
+        active_portal_name = portal_name or config["DEFAULT_PORTAL"]
+        if active_portal_name not in portal_names:
+            active_portal_name = config["DEFAULT_PORTAL"]
+        portal = get_portal_config(config, active_portal_name)
+        state = get_work_item_states(portal["repository"], [int(work_item_id)]).get(int(work_item_id))
+        if not state:
+            raise ServiceError(f"No local automation state was found for WI {work_item_id}.")
+
+        raw_context_path = str(state.get("copilot_context_path") or "").strip()
+        if not raw_context_path:
+            raise ServiceError(f"No agent context package has been created for WI {work_item_id}.")
+
+        capture_files = {
+            "summary": {"label": "Summary", "filename": "summary.md", "markdown": True},
+            "instructions": {"label": "Instructions", "filename": "INSTRUCTIONS.md", "markdown": True},
+            "manifest": {"label": "Manifest", "filename": "manifest.json", "markdown": False},
+        }
+        selected_key = selected_file if selected_file in capture_files else "summary"
+        selected_definition = capture_files[selected_key]
+
+        default_distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip() or "Ubuntu"
+        context_distro, normalized_context_path = normalize_wsl_target_path(raw_context_path, default_distro)
+        if not normalized_context_path:
+            raise ServiceError(f"The saved context path is not valid for WI {work_item_id}.")
+        context_directory = normalized_context_path.rsplit("/", 1)[0]
+        capture_directory = f"{context_directory}/capture"
+        capture_path = f"{capture_directory}/{selected_definition['filename']}"
+        try:
+            content = read_wsl_text_file(context_distro, capture_path, max_chars=300000)
+        except CopilotIntegrationError as exc:
+            raise ServiceError(str(exc)) from exc
+
+        return {
+            "config": config,
+            "portal": portal,
+            "selected_portal": portal["repository"],
+            "work_item_id": int(work_item_id),
+            "selected_file": selected_key,
+            "capture_files": capture_files,
+            "capture_directory": capture_directory,
+            "capture_path": capture_path,
+            "capture_content": content,
+            "capture_html": render_basic_markdown(content) if selected_definition["markdown"] else "",
+            "is_markdown": bool(selected_definition["markdown"]),
+        }
+
     def get_local_status_snapshots(
         self,
         *,
@@ -2004,6 +2155,7 @@ class AutomationService:
         server_host: str,
         server_port: int,
         auto_port: bool,
+        tfs_request_timeout_seconds: int,
         automation_runner_enabled: bool,
         automation_reconcile_interval_seconds: int,
         automation_continuous_mode: bool,
@@ -2029,6 +2181,11 @@ class AutomationService:
         copilot_vscode_global_auto_approve: bool,
         copilot_vscode_auto_accept_edits_delay_ms: int,
         copilot_additional_read_access_folders_text: str,
+        context_capture_enabled: bool,
+        context_capture_root_mode: str,
+        context_capture_max_tree_items: int,
+        context_capture_include_pr_diffs: bool,
+        context_capture_workspace_scan_roots_text: str,
         default_reviewer_display_name: str,
         default_reviewer_unique_name: str,
         default_reviewer_id: str,
@@ -2039,6 +2196,7 @@ class AutomationService:
                 server_host=server_host,
                 server_port=server_port,
                 auto_port=auto_port,
+                tfs_request_timeout_seconds=tfs_request_timeout_seconds,
                 automation_runner_enabled=automation_runner_enabled,
                 automation_reconcile_interval_seconds=automation_reconcile_interval_seconds,
                 automation_continuous_mode=automation_continuous_mode,
@@ -2064,6 +2222,11 @@ class AutomationService:
                 copilot_vscode_global_auto_approve=copilot_vscode_global_auto_approve,
                 copilot_vscode_auto_accept_edits_delay_ms=copilot_vscode_auto_accept_edits_delay_ms,
                 copilot_additional_read_access_folders_text=copilot_additional_read_access_folders_text,
+                context_capture_enabled=context_capture_enabled,
+                context_capture_root_mode=context_capture_root_mode,
+                context_capture_max_tree_items=context_capture_max_tree_items,
+                context_capture_include_pr_diffs=context_capture_include_pr_diffs,
+                context_capture_workspace_scan_roots_text=context_capture_workspace_scan_roots_text,
                 default_reviewer_display_name=default_reviewer_display_name,
                 default_reviewer_unique_name=default_reviewer_unique_name,
                 default_reviewer_id=default_reviewer_id,
@@ -2096,6 +2259,7 @@ class AutomationService:
         lookback_days: int,
         max_prs_per_branch: int,
         verify_work_items_via_api: bool,
+        cherry_pick_skip_labels_text: str = "",
     ) -> Dict[str, Any]:
         if auth_mode not in AUTH_OPTIONS:
             raise ServiceError(f"Unsupported authentication mode '{auth_mode}'.")
@@ -2118,6 +2282,7 @@ class AutomationService:
                     "lookback_days": int(lookback_days),
                     "max_prs_per_branch": int(max_prs_per_branch),
                     "verify_work_items_via_api": bool(verify_work_items_via_api),
+                    "cherry_pick_skip_labels": cherry_pick_skip_labels_text,
                 },
             )
             self._invalidate_portal_runtime_cache(current_repository)
@@ -2863,6 +3028,19 @@ class AutomationService:
             "## Spec References",
             format_spec_references(agent_result.get("spec_references")),
             "",
+            "## Captured Evidence Used",
+            "### Capture Files Read",
+            format_report_value(agent_result.get("capture_files_read"), "No capture files were reported by the agent."),
+            "",
+            "### Work Items Reviewed",
+            format_report_value(agent_result.get("work_items_reviewed"), "No captured work items were reported by the agent."),
+            "",
+            "### Pull Requests Reviewed",
+            format_report_value(agent_result.get("prs_reviewed"), "No captured pull requests were reported by the agent."),
+            "",
+            "### Diffs Reviewed",
+            format_report_value(agent_result.get("diffs_reviewed"), "No captured diffs were reported by the agent."),
+            "",
             "## Validation",
             format_report_value(agent_result.get("validation"), "No validation was reported by the agent."),
             "",
@@ -2983,6 +3161,29 @@ class AutomationService:
             mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
             raise ServiceError(error_message)
 
+        if bool(runtime_settings.get("context_capture_enabled")):
+            try:
+                capture_client = self._build_tfs_client(
+                    portal,
+                    project=str(portal.get("work_item_project") or portal["project"]),
+                    repository=portal["repository"],
+                )
+                capture_package_files = build_context_capture_package(
+                    client=capture_client,
+                    item=current_item,
+                    portal=portal,
+                    workspace_path=workspace_path,
+                    distro=distro,
+                    root_mode=str(runtime_settings.get("context_capture_root_mode") or "parent"),
+                    include_pr_diffs=bool(runtime_settings.get("context_capture_include_pr_diffs")),
+                    max_tree_items=int(runtime_settings.get("context_capture_max_tree_items") or 50),
+                    workspace_scan_roots=list(runtime_settings.get("context_capture_workspace_scan_roots") or ["/workspaces"]),
+                )
+            except Exception as exc:
+                capture_package_files = build_capture_error_package(current_item, str(exc))
+        else:
+            capture_package_files = {}
+
         try:
             result = prepare_cm_gpt_handoff(
                 distro=distro,
@@ -3001,6 +3202,7 @@ class AutomationService:
                 strict_model_safety=strict_model_safety,
                 open_wsl_remote=open_wsl_remote,
                 vscode_window_mode=vscode_window_mode,
+                capture_package_files=capture_package_files,
             )
         except CopilotIntegrationError as exc:
             mark_copilot_result(

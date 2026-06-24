@@ -104,16 +104,26 @@ def _redirect_to_settings(
     portal: str,
     message: str,
     level: str,
+    tab: str = "",
 ) -> RedirectResponse:
-    query = urlencode(
-        {
-            "portal": portal,
-            "message": _safe_flash_message(message),
-            "level": level,
-        }
-    )
+    query_params = {
+        "portal": portal,
+        "message": _safe_flash_message(message),
+        "level": level,
+    }
+    clean_tab = _normalize_settings_tab(tab)
+    if clean_tab:
+        query_params["tab"] = clean_tab
+    query = urlencode(query_params)
     url = f"{request.url_for('settings_page')}?{query}"
     return RedirectResponse(url=url, status_code=303)
+
+
+def _normalize_settings_tab(tab: str) -> str:
+    clean_tab = (tab or "").strip().lower()
+    if clean_tab in {"connection", "automation", "cherry-picks", "runtime"}:
+        return clean_tab
+    return "connection"
 
 
 @app.get("/", response_class=HTMLResponse, name="dashboard")
@@ -171,6 +181,62 @@ def dashboard(
     return TEMPLATES.TemplateResponse(request, "dashboard.html", context)
 
 
+@app.get("/cherry-picks", response_class=HTMLResponse, name="cherry_picks")
+def cherry_picks(
+    request: Request,
+    portal: str = "",
+    load: str = "true",
+    lookback_days: int = 0,
+    max_prs_per_branch: int = 0,
+    scope: str = "All",
+    status: str = "All",
+    branch: str = "All",
+    sort_by: str = "Severity",
+    descending: str = "",
+    message: str = "",
+    level: str = "info",
+) -> HTMLResponse:
+    parsed_load = _parse_optional_bool(load)
+    should_load = True if parsed_load is None else parsed_load
+    try:
+        context = SERVICE.load_cherry_pick_dashboard(
+            portal_name=portal,
+            load=should_load,
+            lookback_days=lookback_days if lookback_days > 0 else None,
+            max_prs_per_branch=max_prs_per_branch if max_prs_per_branch > 0 else None,
+            scope=scope,
+            status=status,
+            branch=branch,
+            sort_by=sort_by,
+            descending=_parse_optional_bool(descending) is True,
+        )
+    except (ServiceError, TfsApiError, RuntimeError) as exc:
+        context = SERVICE.load_cherry_pick_dashboard(
+            portal_name=portal,
+            load=False,
+            lookback_days=lookback_days if lookback_days > 0 else None,
+            max_prs_per_branch=max_prs_per_branch if max_prs_per_branch > 0 else None,
+            scope=scope,
+            status=status,
+            branch=branch,
+            sort_by=sort_by,
+            descending=_parse_optional_bool(descending) is True,
+        )
+        message = f"Failed to load Cherry Pick analysis: {exc}"
+        level = "error"
+    context.update(
+        {
+            "request": request,
+            "page_title": "TFS Documentation Automation MVP",
+            "message": _safe_flash_message(message),
+            "level": level,
+            "active_page": "cherry_picks",
+            "automation_runner": ORCHESTRATOR.snapshot(),
+        }
+    )
+    return TEMPLATES.TemplateResponse(request, "cherry_picks.html", context)
+
+
 @app.get("/work-items/{work_item_id}/details", response_class=HTMLResponse)
 def work_item_detail(
     request: Request,
@@ -224,6 +290,42 @@ def final_report(
     return TEMPLATES.TemplateResponse(request, "report.html", context)
 
 
+@app.get("/work-items/{work_item_id}/capture", response_class=HTMLResponse)
+def context_capture_package(
+    request: Request,
+    work_item_id: int,
+    portal: str = "",
+    file: str = "summary",
+) -> HTMLResponse:
+    try:
+        context = SERVICE.get_context_capture_package(
+            portal_name=portal,
+            work_item_id=work_item_id,
+            selected_file=file,
+        )
+    except ServiceError as exc:
+        context = {
+            "selected_portal": portal,
+            "work_item_id": work_item_id,
+            "selected_file": file,
+            "capture_files": {},
+            "capture_directory": "",
+            "capture_path": "",
+            "capture_content": "",
+            "capture_html": "",
+            "is_markdown": False,
+            "error": str(exc),
+        }
+    context.update(
+        {
+            "request": request,
+            "page_title": f"Context Package - WI {work_item_id}",
+            "active_page": "dashboard",
+        }
+    )
+    return TEMPLATES.TemplateResponse(request, "capture.html", context)
+
+
 @app.get("/tfs-assets")
 def tfs_asset(
     portal: str = "",
@@ -246,9 +348,11 @@ def tfs_asset(
 def settings_page(
     request: Request,
     portal: str = "",
+    tab: str = "connection",
     message: str = "",
     level: str = "info",
 ) -> HTMLResponse:
+    active_settings_tab = _normalize_settings_tab(tab)
     context = SERVICE.get_settings_context(portal)
     context.update(
         {
@@ -257,6 +361,7 @@ def settings_page(
             "message": _safe_flash_message(message),
             "level": level,
             "active_page": "settings",
+            "active_settings_tab": active_settings_tab,
             "automation_runner": ORCHESTRATOR.snapshot(),
         }
     )
@@ -303,6 +408,7 @@ def run_automation_cycle(
                 f"{discovery_total} discovered flow(s) started."
             ),
             level="success",
+            tab="runtime",
         )
     except Exception as exc:
         return _redirect_to_settings(
@@ -310,6 +416,7 @@ def run_automation_cycle(
             portal=portal,
             message=f"Failed to run the automation cycle: {exc}",
             level="error",
+            tab="runtime",
         )
 
 
@@ -322,6 +429,7 @@ def set_pat(
     hide_closed: str = Form(""),
     pat: str = Form(""),
     redirect_target: str = Form("dashboard"),
+    active_settings_tab: str = Form("connection"),
 ) -> RedirectResponse:
     SERVICE.set_portal_pat(portal, pat)
     action = "updated" if pat.strip() else "cleared"
@@ -331,6 +439,7 @@ def set_pat(
             portal=portal,
             message=f"PAT {action} for portal '{portal}'.",
             level="success",
+            tab=active_settings_tab,
         )
     return _redirect_to_dashboard(
         request,
@@ -360,6 +469,8 @@ def save_portal_settings(
     lookback_days: int = Form(...),
     max_prs_per_branch: int = Form(...),
     verify_work_items_via_api: bool = Form(False),
+    cherry_pick_skip_labels_text: str = Form(""),
+    active_settings_tab: str = Form("connection"),
 ) -> RedirectResponse:
     try:
         saved_portal = SERVICE.save_portal_settings(
@@ -377,12 +488,14 @@ def save_portal_settings(
             lookback_days=lookback_days,
             max_prs_per_branch=max_prs_per_branch,
             verify_work_items_via_api=verify_work_items_via_api,
+            cherry_pick_skip_labels_text=cherry_pick_skip_labels_text,
         )
         return _redirect_to_settings(
             request,
             portal=saved_portal["repository"],
             message=f"Saved settings for portal '{saved_portal['repository']}'.",
             level="success",
+            tab=active_settings_tab,
         )
     except (ServiceError, TfsApiError, RuntimeError) as exc:
         return _redirect_to_settings(
@@ -390,6 +503,7 @@ def save_portal_settings(
             portal=current_repository,
             message=f"Failed to save portal settings: {exc}",
             level="error",
+            tab=active_settings_tab,
         )
 
 
@@ -400,6 +514,7 @@ def save_runtime_settings(
     server_host: str = Form(...),
     server_port: int = Form(...),
     auto_port: bool = Form(False),
+    tfs_request_timeout_seconds: int = Form(15),
     automation_runner_enabled: bool = Form(False),
     automation_reconcile_interval_seconds: int = Form(30),
     automation_continuous_mode: bool = Form(False),
@@ -425,16 +540,23 @@ def save_runtime_settings(
     copilot_vscode_global_auto_approve: bool = Form(False),
     copilot_vscode_auto_accept_edits_delay_ms: int = Form(1000),
     copilot_additional_read_access_folders_text: str = Form(""),
+    context_capture_enabled: bool = Form(False),
+    context_capture_root_mode: str = Form("parent"),
+    context_capture_max_tree_items: int = Form(50),
+    context_capture_include_pr_diffs: bool = Form(False),
+    context_capture_workspace_scan_roots_text: str = Form("/workspaces"),
     default_reviewer_display_name: str = Form(""),
     default_reviewer_unique_name: str = Form(""),
     default_reviewer_id: str = Form(""),
     reviewer_overrides_text: str = Form("{}"),
+    active_settings_tab: str = Form("automation"),
 ) -> RedirectResponse:
     try:
         SERVICE.save_runtime_settings(
             server_host=server_host,
             server_port=server_port,
             auto_port=auto_port,
+            tfs_request_timeout_seconds=tfs_request_timeout_seconds,
             automation_runner_enabled=automation_runner_enabled,
             automation_reconcile_interval_seconds=automation_reconcile_interval_seconds,
             automation_continuous_mode=automation_continuous_mode,
@@ -460,6 +582,11 @@ def save_runtime_settings(
             copilot_vscode_global_auto_approve=copilot_vscode_global_auto_approve,
             copilot_vscode_auto_accept_edits_delay_ms=copilot_vscode_auto_accept_edits_delay_ms,
             copilot_additional_read_access_folders_text=copilot_additional_read_access_folders_text,
+            context_capture_enabled=context_capture_enabled,
+            context_capture_root_mode=context_capture_root_mode,
+            context_capture_max_tree_items=context_capture_max_tree_items,
+            context_capture_include_pr_diffs=context_capture_include_pr_diffs,
+            context_capture_workspace_scan_roots_text=context_capture_workspace_scan_roots_text,
             default_reviewer_display_name=default_reviewer_display_name,
             default_reviewer_unique_name=default_reviewer_unique_name,
             default_reviewer_id=default_reviewer_id,
@@ -473,6 +600,7 @@ def save_runtime_settings(
             portal=portal,
             message=success_message,
             level="success",
+            tab=active_settings_tab,
         )
     except (ServiceError, TfsApiError, RuntimeError) as exc:
         return _redirect_to_settings(
@@ -480,6 +608,7 @@ def save_runtime_settings(
             portal=portal,
             message=f"Failed to save runtime settings: {exc}",
             level="error",
+            tab=active_settings_tab,
         )
 
 

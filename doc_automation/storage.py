@@ -142,8 +142,22 @@ def list_auto_flow_states() -> List[Dict[str, object]]:
             """
             SELECT *
             FROM work_item_state
-            WHERE auto_flow_enabled = 1
-              AND COALESCE(pr_status, '') NOT IN ('created', 'exists')
+            WHERE COALESCE(pr_status, '') NOT IN ('created', 'exists')
+              AND (
+                auto_flow_enabled = 1
+                OR COALESCE(push_status, '') = 'pushed'
+                OR (
+                  COALESCE(branch_name, '') != ''
+                  AND COALESCE(agent_result_path, '') != ''
+                  AND (
+                    COALESCE(agent_result_status, '') IN ('green_light', 'ready_for_push', 'success', 'waiting')
+                    OR (
+                      COALESCE(agent_result_status, '') = 'error'
+                      AND COALESCE(agent_result_error, '') LIKE 'Agent result file changed recently;%'
+                    )
+                  )
+                )
+              )
             ORDER BY updated_at ASC
             """
         ).fetchall()

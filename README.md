@@ -2,11 +2,11 @@
 
 Isolated MVP project for validating an LLM-assisted pipeline that analyzes TFS work items, prepares documentation work branches, and creates draft PR workflows under human supervision.
 
-This MVP started from a minimal copy of the Cherry Picks dashboard so it could reuse the existing TFS/Azure DevOps Server connection, authentication behavior, portal configuration, and initial data access patterns. The original dashboard remains unchanged.
+This MVP started from a minimal copy of the Cherry Picks dashboard so it could reuse the existing TFS/Azure DevOps Server connection, authentication behavior, portal configuration, and initial data access patterns. The active copy now lives under the centralized Content AI projects workspace.
 
 ## Status
 
-FastAPI dashboard baseline implemented.
+FastAPI dashboard baseline implemented with the automation control plane, background runner, provider handoff flow, and an integrated read-only Cherry Pick propagation page.
 
 ## Documentation
 
@@ -34,7 +34,7 @@ The `.agents/memory.md` file stores persistent project context, decisions, plann
 ## Running The Dashboard
 
 ```powershell
-cd C:\CM-REPO\Content\tfs-doc-automation-mvp
+cd C:\CM-REPO\Content\CM-AI-Content-Skills\projects\tfs-doc-automation-mvp
 python run_server.py
 ```
 
@@ -45,18 +45,6 @@ Or:
 ```
 
 If port `8000` is already in use or blocked, `run_server.py` reads `.env` and can automatically move to the next free port.
-
-## Devcontainer Tasks
-
-This copy includes a devcontainer definition and VS Code tasks for container-based validation.
-
-Open this project folder in a devcontainer and use:
-
-- `TFS Automation: Install Dependencies` to reinstall Python requirements.
-- `TFS Automation: Run Dashboard` to run `uvicorn` on `0.0.0.0` with the selected forwarded port.
-- `TFS Automation: Run Background Worker` to run the automation worker loop.
-
-The devcontainer setup copies `.env.example` to `.env` when no local runtime file exists, creates `data/reports`, installs requirements, and compiles the Python modules as a startup smoke check.
 
 ## Implemented In This Slice
 
@@ -85,10 +73,25 @@ The devcontainer setup copies `.env.example` to `.env` when no local runtime fil
 - draft PR creation through TFS pull request APIs;
 - formal draft PR association to the parent work item when one exists, with the task itself as fallback;
 - required reviewer assignment based on the team member assigned to the work item.
+- integrated read-only Cherry Pick propagation analysis under the `Cherry Picks` navigation tab;
 - `.env`-driven runtime settings editable from the dashboard;
 - reviewer override mapping through `.env` for cases where work item identities must resolve to specific PR reviewers.
 
 Operational actions stay on the main dashboard. Configuration concerns such as portal settings, authentication, runtime settings, and reviewer mapping live on the `Settings` page.
+
+## Cherry Pick Propagation Tab
+
+The `Cherry Picks` page ports the useful propagation analysis from the previous Streamlit dashboard into the FastAPI application. It uses the selected portal configuration, branch chain, authentication mode, lookback window, and work item verification setting.
+
+The page is intentionally read-only:
+
+- it analyzes pull requests across the configured branch chain;
+- it groups related PRs by work item links or branch naming fallback;
+- it highlights missing, open, abandoned, and completed propagation states;
+- it supports scope, status, branch, and sort filters;
+- it does not create branches, create PRs, update work items, or execute cherry-picks.
+
+This keeps the previous review workflow available as a dashboard component without requiring a second Streamlit process or a second devcontainer task.
 
 ## Portal Configuration Note
 
@@ -110,6 +113,7 @@ For VS Code Copilot:
 
 - a custom Copilot agent file is generated under the WSL user profile;
 - a work-item-specific context package is generated under the target repository `.automation-context/copilot/<branch>/` directory, including Markdown, JSON, and HTML exports of the work item content;
+- a rich capture package is generated under `.automation-context/copilot/<branch>/capture/`, including the parent/root work item tree, comments/history, linked PR metadata, review comments, changed files, available local diffs, `summary.md`, `INSTRUCTIONS.md`, and `manifest.json`;
 - repository instruction files are copied into `.automation-context/copilot/<branch>/repo-instructions/` with an index so the handoff is auditable even when the editor session does not attach files directly;
 - referenced specification documents from the configured reference documentation workspace are resolved into `.automation-context/copilot/<branch>/reference-docs/`, including an index and text extracts for readable `.docx`/`.docm` files;
 - the `.automation-context/` root is added to the repository's local `.git/info/exclude` file so the context package is visible to VS Code agents but is not committed or shown as normal untracked work;
@@ -152,16 +156,29 @@ When a work item needs to be processed again because new information was added a
 
 The background runner periodically resumes any persisted automatic flow that has not reached a PR yet. This means the flow does not depend on the browser tab or on the original HTTP request staying alive. When `Continuous Mode` is enabled in Settings, the runner also checks for open current-iteration tasks at the configured discovery interval and starts the automatic flow for newly discovered eligible items.
 
+The reconciliation step also resumes recoverable states that lost the active-flow flag after a process restart or transient failure, including green-lighted agent results that have not yet been pushed, pushed branches without a draft PR, and the transient result-stability wait state. This prevents a valid `agent-result.json` from being stranded before commit, push, or PR creation.
+
 `run_worker.py` exposes the same runner loop for a future dedicated service deployment. The dashboard currently starts an embedded runner for local MVP use. Production should run a single active runner instance per automation environment so two processes do not race to launch the same work item.
 
 The current handoff also:
 
 - accepts WSL Linux paths, home-relative paths, and UNC paths such as `\\wsl.localhost\Ubuntu\workspaces\DocumentationPortal-#01`;
 - includes `AGENTS.md`, `.github/copilot-instructions.md`, and Markdown files under `.agents` when they exist in the target repository, and requires the agent to acknowledge reading them;
+- starts from the captured work item tree when available, so the agent can inspect the broader parent item, sibling DOC tasks, implementation PRs, review comments, and diffs before editing;
 - lists work item attachment links, hyperlink relations, image sources found in the work item HTML, and referenced `.docx` files;
 - creates a reference-documentation package for detected specification names so the agent can read `reference-docs/index.md` and packaged text extracts before reporting that a spec could not be found;
 - serves protected TFS image attachments through the local `/tfs-assets` proxy so the dashboard can render images with the configured TFS credentials;
 - can point CM GPT to a shared reference documentation workspace, for example `/workspaces/Documentation`.
+
+Context capture can be configured from `Settings > Automation`:
+
+- enable or disable rich capture;
+- choose whether the capture starts from the selected task or from its parent work item when available;
+- limit the maximum number of work items walked in the tree;
+- enable or disable local PR diff capture;
+- configure workspace scan roots used to discover local clones for PR diffs.
+
+After a provider handoff is prepared, the work item detail panel exposes `View Context Package`. This opens a read-only dashboard page for the generated `capture/summary.md`, `capture/INSTRUCTIONS.md`, and `capture/manifest.json` files so reviewers can audit exactly which evidence was sent to the agent.
 
 Before using the CM GPT action, configure these values in `Settings`:
 
@@ -181,6 +198,37 @@ Temporary test mode:
 - turning off `Strict CM GPT Safety Mode` disables the CM GPT-only guard and lets the dashboard use the configured `Model Name`;
 - this is intended only for end-to-end pipeline validation with explicitly selected VS Code Copilot models such as `GPT-4o` or `GPT-4.1`;
 - re-enable the strict guard before processing proprietary work items in the approved production flow.
+
+## Content AI Devcontainer Bootstrap
+
+Target repositories can install the pipeline and managed Content AI assets from a devcontainer by calling:
+
+```bash
+CONTENT_AI_REPO_URL=<repo-url> \
+CONTENT_AI_TARGET_WORKSPACE="$PWD" \
+bash /workspaces/CM-AI-Content-Skills/projects/tfs-doc-automation-mvp/scripts/devcontainer-bootstrap.sh
+```
+
+The bootstrap:
+
+- clones or updates the centralized `CM-AI-Content-Skills` checkout;
+- installs the pipeline requirements into `~/.venvs/tfs-doc-automation-mvp`;
+- creates a `tfs-autonomous-pipeline` wrapper in `~/.local/bin`;
+- creates local runtime files for the target devcontainer, including `.env` and `config/tfs_dashboard.local.json`;
+- points the active portal workspace to the target repository workspace, normally `/app`;
+- syncs managed AI assets into the target repository under `.agents/content-ai/`.
+
+Managed assets are copied from:
+
+- `AGENTS.md`;
+- `ai/manifest.json`;
+- `ai/skills/`;
+- `ai/agents/`;
+- `ai/instructions/`.
+
+The target repository root `AGENTS.md` is never overwritten. The managed destination is `.agents/content-ai/`, and the sync script adds `/.agents/content-ai/` to the local `.git/info/exclude` file so these runtime assets remain local unless a repository explicitly chooses another policy.
+
+The generated `config/tfs_dashboard.local.json` is intentionally ignored by Git. It lets each devcontainer point the dashboard to its own workspace without changing the shared `config/tfs_dashboard.json` baseline.
 
 This supports scenarios where the development team owns the sprint board while documentation changes happen in `DocumentationPortal` or `DeveloperPortal`.
 

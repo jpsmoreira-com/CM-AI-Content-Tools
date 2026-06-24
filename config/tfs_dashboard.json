@@ -8,7 +8,7 @@
       "work_item_project": "Product",
       "work_item_team": "",
       "work_item_area_path": "Product\\Development",
-      "copilot_workspace_path": "\\\\wsl.localhost\\Ubuntu\\workspaces\\DocumentationPortal-#01",
+      "copilot_workspace_path": "\\\\wsl.localhost\\Ubuntu\\workspaces\\DocumentationPortal-#12.0",
       "team": "",
       "api_version": "6.0",
       "branch_chain": [
@@ -21,7 +21,12 @@
       "lookback_days": 7,
       "max_prs_per_branch": 150,
       "verify_work_items_via_api": true,
-      "auth_mode": "Windows Credentials"
+      "cherry_pick_skip_labels": [
+        "No CP",
+        "no-cp",
+        "not to cp"
+      ],
+      "auth_mode": "Git Credentials"
     },
     {
       "base_url": "https://tfs-product.cmf.criticalmanufacturing.com/Products",
@@ -41,7 +46,12 @@
       "lookback_days": 7,
       "max_prs_per_branch": 150,
       "verify_work_items_via_api": true,
-      "auth_mode": "Windows Credentials"
+      "cherry_pick_skip_labels": [
+        "No CP",
+        "no-cp",
+        "not to cp"
+      ],
+      "auth_mode": "Git Credentials"
     }
   ]
 }

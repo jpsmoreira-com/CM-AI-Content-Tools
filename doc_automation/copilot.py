@@ -74,6 +74,29 @@ def _run_wsl_script(
     )
 
 
+def read_wsl_text_file(distro: str, file_path: str, *, max_chars: int = 200000) -> str:
+    clean_path = str(file_path or "").strip()
+    if not clean_path:
+        raise CopilotIntegrationError("A WSL file path is required.")
+    if max_chars < 1:
+        max_chars = 200000
+    result = _run_wsl_script(
+        distro,
+        (
+            f"target={_shell_quote(clean_path)}; "
+            'if [ ! -f "$target" ]; then '
+            'printf "File not found: %s\\n" "$target" >&2; exit 2; '
+            "fi; "
+            f"head -c {int(max_chars)} \"$target\""
+        ),
+        timeout_seconds=30,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise CopilotIntegrationError(detail or f"Could not read WSL file: {clean_path}")
+    return result.stdout
+
+
 def _run_windows_command(
     command: List[str],
     *,
@@ -122,10 +145,11 @@ def normalize_wsl_target_path(path_value: str, default_distro: str) -> Tuple[str
     else:
         normalized_path = raw_value.replace("\\", "/")
 
-    home_path = _resolve_wsl_home(inferred_distro)
     if normalized_path == "~":
+        home_path = _resolve_wsl_home(inferred_distro)
         normalized_path = home_path
     elif normalized_path.startswith("~/"):
+        home_path = _resolve_wsl_home(inferred_distro)
         normalized_path = f"{home_path}/{normalized_path[2:]}"
     elif normalized_path.startswith("/"):
         normalized_path = normalized_path
@@ -1255,6 +1279,14 @@ def read_agent_result(distro: str, result_path: str) -> Dict[str, Any]:
         "changed_files": changed_files,
         "final_report": payload.get("final_report") or payload.get("report") or {},
         "spec_references": payload.get("spec_references") or payload.get("specs_used") or [],
+        "capture_files_read": [
+            _normalize_instruction_relative_path(candidate)
+            for candidate in payload.get("capture_files_read") or payload.get("capture_read") or []
+            if _normalize_instruction_relative_path(candidate)
+        ],
+        "prs_reviewed": payload.get("prs_reviewed") or payload.get("pull_requests_reviewed") or [],
+        "diffs_reviewed": payload.get("diffs_reviewed") or [],
+        "work_items_reviewed": payload.get("work_items_reviewed") or [],
         "validation": payload.get("validation") or "",
         "instruction_files_read": [
             _normalize_instruction_relative_path(candidate)
@@ -1762,6 +1794,7 @@ def prepare_cm_gpt_handoff(
     open_wsl_remote: bool,
     vscode_window_mode: str,
     allow_existing_changes: bool = False,
+    capture_package_files: Dict[str, str] | None = None,
 ) -> Dict[str, Any]:
     clean_branch_name = str(branch_name or "").strip()
     clean_agent_name = str(agent_name or "").strip()
@@ -1812,6 +1845,10 @@ def prepare_cm_gpt_handoff(
         model_name=clean_model_name,
         strict_model_safety=strict_model_safety,
     )
+    for relative_name, file_content in (capture_package_files or {}).items():
+        clean_relative_name = str(relative_name or "").strip().replace("\\", "/").lstrip("/")
+        if clean_relative_name and clean_relative_name not in package_files:
+            package_files[clean_relative_name] = str(file_content or "")
 
     agent_file_paths: List[str] = []
     if clean_provider == "vscode":
@@ -1831,6 +1868,10 @@ def prepare_cm_gpt_handoff(
     main_context_path = f"{package_directory}/work-item.md"
     attached_paths = [main_context_path]
     for extra_file in ["work-item.json", "description.html", "acceptance-criteria.html", "repro-steps.html"]:
+        candidate_path = f"{package_directory}/{extra_file}"
+        if extra_file in package_files:
+            attached_paths.append(candidate_path)
+    for extra_file in ["capture/INSTRUCTIONS.md", "capture/summary.md", "capture/manifest.json"]:
         candidate_path = f"{package_directory}/{extra_file}"
         if extra_file in package_files:
             attached_paths.append(candidate_path)
@@ -1875,16 +1916,28 @@ def prepare_cm_gpt_handoff(
         if reference_docs_index_path
         else ""
     )
+    relative_capture_instructions_path = (
+        f"{relative_package_directory}/capture/INSTRUCTIONS.md"
+        if "capture/INSTRUCTIONS.md" in package_files
+        else ""
+    )
+    relative_capture_summary_path = (
+        f"{relative_package_directory}/capture/summary.md"
+        if "capture/summary.md" in package_files
+        else ""
+    )
     work_item_context_text = str(package_files["work-item.md"])
     result_contract = (
         f"When finished, write `{relative_agent_result_path}` as JSON with these fields: "
         "`status`, `green_light`, `summary`, `changed_files`, `final_report`, `spec_references`, `validation`, "
-        "`instruction_files_read`, `reviewer_notes`, and optional `error`. "
+        "`instruction_files_read`, `capture_files_read`, `prs_reviewed`, `diffs_reviewed`, `work_items_reviewed`, "
+        "`reviewer_notes`, and optional `error`. "
         "Set `green_light` to true only when the changes are ready to commit and push. "
         "Use repository-relative paths in `changed_files` and do not include this result file. "
         "`final_report` must explain what changed and why it changed. "
         "`spec_references` must list every spec or reference document used, including the spec path/name, section/topic, and how it informed the change. "
         "`instruction_files_read` must list every repository instruction original path read from the instruction package. "
+        "`capture_files_read`, `prs_reviewed`, `diffs_reviewed`, and `work_items_reviewed` must identify the captured evidence used to decide and implement the change. "
         "Use an empty array when no spec was used."
     )
     instruction_body = _render_template(
@@ -1914,6 +1967,15 @@ def prepare_cm_gpt_handoff(
             f"- Read `{relative_reference_docs_index_path}` before deciding that a referenced spec is unavailable.\n"
             "- Read the packaged text extracts listed there when matches exist.\n"
             "- If a spec was used, record its source path/name and section/topic in `spec_references`."
+        )
+    if relative_capture_instructions_path:
+        instruction_body = (
+            f"{instruction_body.strip()}\n\n"
+            "Captured work item tree and implementation evidence:\n"
+            f"- Start by reading `{relative_capture_instructions_path}`.\n"
+            f"- Then read `{relative_capture_summary_path}` and the referenced work item and PR files.\n"
+            "- Review PR diffs when they are available before deciding what to change.\n"
+            "- Record the capture files, work items, PRs, and diffs used in `agent-result.json`."
         )
     if strict_model_safety:
         model_policy = (

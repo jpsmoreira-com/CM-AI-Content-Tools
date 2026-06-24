@@ -1,6 +1,6 @@
 # Project Memory - TFS Documentation Automation MVP
 
-Last updated: 2026-05-28
+Last updated: 2026-06-23
 
 ## Purpose
 
@@ -33,10 +33,12 @@ Target solution:
 Path:
 
 ```text
-C:\CM-REPO\Content\tfs-doc-automation-mvp
+C:\CM-REPO\Content\CM-AI-Content-Skills\projects\tfs-doc-automation-mvp
 ```
 
-This project was created as an isolated copy of the existing Cherry Picks dashboard. The original dashboard must remain untouched unless explicitly requested.
+This is the active project copy for the Content AI projects workspace. All future implementation work for this initiative must happen under `C:\CM-REPO\Content\CM-AI-Content-Skills\projects`.
+
+This project was originally created as an isolated copy of the existing Cherry Picks dashboard, then evolved into the FastAPI automation pipeline. The original dashboard source should remain untouched unless explicitly requested.
 
 Copied baseline files:
 
@@ -58,7 +60,7 @@ New project files:
 Original dashboard:
 
 ```text
-C:\CM-REPO\Content\tfs-cherry-pick-dashboard
+C:\CM-REPO\Content\CM-AI-Content-Skills\projects\tfs-cherry-pick-dashboard
 ```
 
 Useful existing capabilities from that project:
@@ -69,7 +71,7 @@ Useful existing capabilities from that project:
 - PR and work item reads.
 - Streamlit UI.
 
-Important: the Cherry Picks dashboard is read-only and should stay stable. The documentation automation MVP should evolve in its own folder.
+Important: the Cherry Picks dashboard source is used as a reference. The integrated Cherry Pick propagation page in `tfs-doc-automation-mvp` is read-only and should not create branches, PRs, work item updates, or cherry-picks.
 
 ## Current Technical Direction
 
@@ -151,6 +153,9 @@ Initial philosophy:
 43. The initial agent instruction body must be configurable from Settings. Safety gates and the result-file contract remain controlled by the application.
 44. Agent execution must be provider-oriented. VS Code Copilot remains the main executor, while Codex, Claude, or another local CLI can be selected when a command template is configured.
 45. Performance problems must be measurable. Dashboard load, work item query, repository enrichment, and TFS request timings are logged to `data/performance.log`.
+46. Centralized Content AI project work must use `C:\CM-REPO\Content\CM-AI-Content-Skills\projects` as the active workspace root.
+47. The Cherry Pick dashboard is now integrated as a FastAPI/Jinja page at `/cherry-picks` instead of running as a separate Streamlit app or iframe.
+48. The integrated Cherry Pick page is a read-only analysis component and reuses the automation project's portal configuration, TFS client, authentication modes, branch chain, and devcontainer task flow.
 
 ## MVP Scope
 
@@ -544,3 +549,174 @@ Open questions for this task:
 - Investigated the next WI `153571` provider failure after the CRLF fix. The wrapper executed, but Codex CLI failed with `refresh_token_reused`, `token_expired`, and `401 Unauthorized`.
 - Confirmed the same failure with a minimal `codex exec` smoke prompt in WSL, while `codex login status` still reported stored ChatGPT auth. This means the saved WSL Codex auth exists but cannot refresh and must be recreated with `codex logout` followed by `codex login`.
 - Added provider-log summarization so dashboard errors no longer include large prompt/context blocks. Known Codex auth failures now render as a concise actionable message while the full `agent-provider.log` remains on disk for diagnostics.
+
+2026-06-12:
+
+- Continued WI `153571` after the agent had already written a valid `agent-result.json` with `green_light=true` but no push or draft PR had been created.
+- Root cause for the missing draft PR: the local automation state had `auto_flow_enabled=0`, so the background runner did not reconcile the green-lighted agent result after the previous transient result-stability/error state.
+- Used the normal service continuation path, not manual Git commands, to commit, push, and create the draft PR. The branch was pushed at commit `a491e3c0a5df02471ee56dca490107e21647028c` and draft PR `#87939` was created.
+- Hardened persisted-flow reconciliation. `list_auto_flow_states()` now returns recoverable states even when `auto_flow_enabled` was lost: pushed branches without PRs, green-lighted agent results without push/PR, waiting result states, and the transient `Agent result file changed recently` stability state.
+- Validated that WI `153571` now has `push_status=pushed`, `pr_status=created`, `pr_id=87939`, and that no persisted auto-flow states remain pending.
+
+2026-06-17:
+
+- New working rule: all future implementation work for this initiative must happen under `C:\CM-REPO\Content\CM-AI-Content-Skills\projects`.
+- Planned the integration of `projects/tfs-cherry-pick-dashboard` as a first-class component of `projects/tfs-doc-automation-mvp`.
+- Integration goal: expose Cherry Pick propagation analysis as a new dashboard tab/page inside the FastAPI pipeline application instead of running Streamlit as a separate application.
+- Architecture decision: migrate the Cherry Pick domain logic into reusable FastAPI service modules and render the UI through Jinja templates. Do not embed Streamlit in an iframe and do not require a second devcontainer task/server for normal use.
+- Devcontainer requirement: the combined dashboard must continue to run from the existing `tfs-doc-automation-mvp` devcontainer and VS Code task flow.
+
+Cherry Pick integration task plan:
+
+1. [Done] Create a reusable Cherry Pick service module in `doc_automation/` that ports propagation logic from `tfs-cherry-pick-dashboard/tfs_dashboard.py`.
+2. [Done] Reuse the existing pipeline `TfsClient`, portal configuration, authentication modes, and branch-chain settings.
+3. [Done] Add missing generic TFS client helpers needed by the Cherry Pick logic, keeping duplicated client code out of the final design.
+4. [Done] Add a `/cherry-picks` FastAPI route.
+5. [Done] Add a `templates/cherry_picks.html` Jinja page with portal, lookback, scope, status, branch, and sorting controls.
+6. [Done] Add top navigation for `Automation`, `Cherry Picks`, and `Settings`.
+7. [Done] Keep the Cherry Pick page read-only: no branch creation, PR creation, work item updates, or cherry-pick execution from this component.
+8. [Done] Update README and project memory to describe the integrated Cherry Pick tab.
+9. [Done] Validate with Python compilation and a local HTTP smoke test.
+10. [Pending] Later enhancement: merge Settings UX so Cherry Pick-specific controls are clearly grouped with automation settings without making the configuration page noisy.
+
+2026-06-17 implementation notes:
+
+- Added `doc_automation/cherry_picks.py` as the reusable Cherry Pick analysis service.
+- Added `/cherry-picks` in `doc_automation/web.py` and `templates/cherry_picks.html`.
+- Added Cherry Pick styling to `static/site.css`.
+- Added `Git Credentials` as an auth mode so the integrated page can run from Linux/devcontainer contexts that rely on Git credential helpers.
+- Added optional `requests-ntlm` support for Git Credentials authentication. The app still imports when the package is absent, but using that auth mode requires installing `requests-ntlm`.
+- Verified `python -m compileall` and a FastAPI TestClient render of `/cherry-picks` returning HTTP 200 without loading TFS data.
+
+2026-06-17 devcontainer test preparation:
+
+- Prepared `/workspaces/DocumentationPortal-#12.0` as the first WSL devcontainer test host for the integrated dashboard.
+- Updated its `01-light` and `02-full` devcontainer profiles to mount the centralized project from `/mnt/c/CM-REPO/Content/CM-AI-Content-Skills/projects/tfs-doc-automation-mvp` into `/workspaces/tfs-doc-automation-mvp`.
+- Forwarded port `8010` for the integrated TFS Autonomous Pipeline dashboard so it does not conflict with MkDocs on port `8000`.
+- Extended the repository VS Code tasks with `TFS Autonomous Pipeline - Install Dependencies`, `Run Dashboard`, `Run Worker`, and `Stop`.
+- Extended `post-create.sh` to create `/home/vscode/.venvs/tfs-doc-automation-mvp` and install the dashboard requirements separately from the MkDocs environment.
+- JSON validation passed for the modified devcontainer and tasks files.
+- Open implementation note: full agent/branch automation from inside the devcontainer still needs native Linux execution support or a confirmed host bridge, because current workspace automation code still uses `wsl.exe` for several Git and provider operations.
+
+2026-06-18 devcontainer test adjustment:
+
+- Investigated the `DocumentationPortal-#12.0` devcontainer startup failure. The actual failure occurs before post-create/tasks: Docker cannot pull `mcr.microsoft.com/devcontainers/python:3.11-bookworm` because the WSL Docker daemon reports `connect: no route to host`.
+- Removed the manual `TFS Autonomous Pipeline - Install Dependencies` task from the test host.
+- Added `.devcontainer/common/tfs-autonomous-pipeline.sh` in `DocumentationPortal-#12.0`. `Run Dashboard` and `Run Worker` now call this helper, which creates/updates `/home/vscode/.venvs/tfs-doc-automation-mvp` automatically when `requirements.txt` changes.
+- Updated `post-create.sh` to reuse the same helper with the `ensure` command.
+- Validated JSON for the devcontainer/task files and shell syntax for the helper script.
+- Resolved the WSL outbound networking issue by creating `C:\Users\lmpereira\.wslconfig` with `networkingMode=mirrored`, `dnsTunneling=true`, and `autoProxy=true`, followed by `wsl --shutdown`.
+- After the WSL restart, `curl -4 -I https://mcr.microsoft.com/v2/` succeeded from Ubuntu and `docker pull mcr.microsoft.com/devcontainers/python:3.11-bookworm` completed successfully.
+
+2026-06-18 devcontainer runtime validation:
+
+- Copied the previous local MVP `.env` from `C:\CM-REPO\Content\tfs-doc-automation-mvp\.env` into the centralized project at `C:\CM-REPO\Content\CM-AI-Content-Skills\projects\tfs-doc-automation-mvp\.env`.
+- Updated the centralized `DocumentationPortal` portal config to use the WSL test workspace `\\wsl.localhost\Ubuntu\workspaces\DocumentationPortal-#12.0` and `Git Credentials` authentication for devcontainer testing.
+- Fixed Settings rendering inside Linux/devcontainer by avoiding `wsl.exe` calls for already-absolute Linux paths in `normalize_wsl_target_path`.
+- Settings now returns HTTP 200 on the devcontainer dashboard at port `8010`.
+- Copied the WSL host Git credential store into the active devcontainer user for this test session so `git credential fill` can resolve TFS credentials inside the container. This is session/container-local and may need repeating after a rebuild.
+- Current external blocker: TFS itself is unreachable from Windows, WSL, and the container while off VPN/internal network. `tfs-product.cmf.criticalmanufacturing.com` resolves to `10.24.14.100`, but TCP 443 times out. Reconnect VPN/internal network before testing live TFS reads.
+
+2026-06-18 Cherry Pick UI and Settings UX plan:
+
+- Updated the Cherry Picks navigation link to show the global loading overlay while the propagation analysis page is opened. The overlay uses Cherry Pick-specific progress messages so the page does not feel stuck while TFS PR data is loading.
+- Renamed the Cherry Picks page submit button from `Load Cherry Picks` to `Load`.
+- Settings UX direction: restructure the Settings page into top-level tabs instead of one long mixed form.
+- Proposed tab model:
+  1. `Connection`: shared TFS/project/repository/authentication/API/branch-chain settings used by both Automation and Cherry Picks.
+  2. `Automation`: work item discovery, Content team members, reviewer resolution, branch planning defaults, agent provider/model/prompt/reference docs/final reports, VS Code permissions, and automatic runner settings.
+  3. `Cherry Picks`: propagation-analysis defaults such as lookback days, maximum PRs per branch, default scope/status/branch/sort values, and read-only behavior notes.
+  4. `Runtime`: local dashboard/worker host and port, performance log location, and service health/status controls.
+- Keep the portal selector and a compact horizontal status summary above the tabs. Avoid duplicating shared repository/auth fields inside individual dashboard-specific tabs.
+
+2026-06-18 Settings tabs implementation:
+
+- Reworked the Settings page into four server-rendered tabs: `Connection`, `Automation`, `Cherry Picks`, and `Runtime`.
+- The top of Settings now has a compact portal selector plus horizontal status summary instead of a tall mixed configuration strip.
+- `Connection` holds shared TFS/work-item source, target repository, authentication, workspace, and branch-chain settings.
+- `Cherry Picks` holds propagation-analysis defaults such as lookback days, maximum PRs per branch, and work-item API verification. It also shows the shared branch chain as a read-only preview.
+- `Automation` holds work-item discovery defaults, reviewer resolution, agent/provider/model/prompt settings, and VS Code Copilot permission settings.
+- `Runtime` holds the background runner controls and local dashboard server settings.
+- Settings redirects preserve the active tab after saving or running the automation cycle.
+- Validated all four tabs with FastAPI TestClient and the running devcontainer dashboard on port `8010`.
+
+2026-06-19 TFS connectivity recovery:
+
+- Investigated a dashboard failure after VPN was connected where work items were not loading from TFS.
+- The persisted portal configuration was still correct: `Git Credentials`, `Product\Development`, and the expected TFS base URL.
+- Root cause: the active devcontainer no longer had usable Git credentials for `tfs-product.cmf.criticalmanufacturing.com`, so `git credential fill` failed for the `vscode` user inside the container.
+- Restored the test session by copying `/home/lmpereira/.gitconfig` and `/home/lmpereira/.git-credentials` from the WSL host into `/home/vscode` inside container `b5bda713f6b8`, then fixing ownership and permissions.
+- Added `DOC_AUTOMATION_TFS_REQUEST_TIMEOUT_SECONDS` with a default of 15 seconds so failed TFS calls no longer hold the dashboard for about one minute.
+- Added timeout and clearer error messages around Git credential lookup so missing/stale container credentials surface as a visible dashboard error instead of a long ambiguous wait.
+- Verified the dashboard again through `http://127.0.0.1:8010/`: it returned HTTP 200 in about 5 seconds and displayed 10 visible work items.
+
+2026-06-19 Cherry Picks portal switching and No-CP labels:
+
+- Reproduced a `500 Internal Server Error` when opening the Cherry Picks dashboard with `DeveloperPortal`.
+- Root cause: `DeveloperPortal` was configured with `Windows Credentials`, but the active devcontainer is Linux-based and does not have PowerShell. The legacy fallback attempted to execute `powershell` anyway, causing `FileNotFoundError`.
+- Fixed PowerShell-based TFS requests to fail as a controlled `TfsApiError` when PowerShell is unavailable, with guidance to use `Git Credentials` or PAT in the devcontainer.
+- Updated the local `DeveloperPortal` config to use `Git Credentials`, matching the active devcontainer runtime.
+- Added configurable Cherry Pick skip labels at portal level. Defaults are `No CP`, `no-cp`, and `not to cp`.
+- Skip-label matching ignores case, spaces, hyphens, underscores, and accents, so variants such as `NO-CP` and `no cp` match the same rule.
+- The Cherry Picks page now shows an `Ignored` metric and displays the configured ignored labels in the page hint.
+- Current validation: `DeveloperPortal` Cherry Picks load returns HTTP 200 and reports 3 analyzed PRs, 0 ignored PRs, and 2 visible rows. `DocumentationPortal` returns HTTP 200 and reports 34 analyzed PRs, 0 ignored PRs, and 18 visible rows.
+- Abandoned PRs are now ignored automatically by the Cherry Pick propagation analysis. They are removed before grouping, so an abandoned original PR no longer creates a visible family and an abandoned downstream PR no longer satisfies a target branch.
+
+2026-06-23 Context Capture and Managed Assets:
+
+- Created a full project backup before implementation at `C:\CM-REPO\Content\CM-AI-Content-Skills\projects\_backups\tfs-doc-automation-mvp-20260623-165016`.
+- Reviewed `projects/ado-capture` and decided not to replace the automation MVP. The MVP remains the operational pipeline, while the `ado-capture` approach becomes a reusable rich context capture engine inside the handoff.
+- Added `doc_automation/context_capture.py`.
+- The capture engine starts from the selected task parent when available, otherwise the selected task itself.
+- It captures the work item tree, comments, legacy history, linked PR metadata, commits, changed files, review comments, and local PR diffs when matching clones are available under the configured workspace scan roots.
+- The agent context package now includes `capture/summary.md`, `capture/INSTRUCTIONS.md`, `capture/manifest.json`, `capture/workitems/...`, and `capture/pullrequests/...`.
+- Capture failures are non-fatal. A small capture error package is generated and the pipeline continues with the base work item context.
+- The agent result contract now accepts `capture_files_read`, `prs_reviewed`, `diffs_reviewed`, and `work_items_reviewed`.
+- Final reports now include a `Captured Evidence Used` section.
+- Established the managed shared-asset destination standard: target repositories receive shared Content AI assets under `.agents/content-ai/`; root `AGENTS.md` in target repositories is never overwritten.
+- Added `scripts/sync-content-ai-assets.sh` to copy `AGENTS.md`, `ai/manifest.json`, `ai/skills`, `ai/agents`, and `ai/instructions` from the central repository into `.agents/content-ai/`, with an install manifest and local Git exclude rule.
+- Added `scripts/devcontainer-bootstrap.sh` for target repositories to clone/update `CM-AI-Content-Skills`, install pipeline requirements, create the `tfs-autonomous-pipeline` wrapper, and sync managed assets.
+- Updated `.devcontainer/setup.sh` so scripts are executable and optional asset sync can run when `CONTENT_AI_SYNC_ASSETS=true`.
+- Updated the project devcontainer to forward port `8010`.
+- Validated Python compilation, shell syntax, and `devcontainer.json`.
+
+2026-06-23 Context Capture Settings:
+
+- Added runtime settings for the rich context capture engine:
+  - `DOC_AUTOMATION_CONTEXT_CAPTURE_ENABLED`;
+  - `DOC_AUTOMATION_CONTEXT_CAPTURE_ROOT_MODE`;
+  - `DOC_AUTOMATION_CONTEXT_CAPTURE_MAX_TREE_ITEMS`;
+  - `DOC_AUTOMATION_CONTEXT_CAPTURE_INCLUDE_PR_DIFFS`;
+  - `DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON`.
+- Added `Context Capture` controls under `Settings > Automation`.
+- Root modes are `parent` and `task`. `parent` uses the parent work item when available and remains the default because implementation evidence usually lives around the user story or bug, not only the DOC task.
+- The agent launcher now respects the configured capture settings instead of always using fixed defaults.
+- Updated `.env.example`, README, and technical design with the new capture controls.
+- Validation passed for Python compilation, runtime settings loading, and Settings page rendering through FastAPI TestClient.
+
+2026-06-23 Context Package Viewer:
+
+- Added a read-only context package viewer at `/work-items/{id}/capture`.
+- The work item detail panel now shows `View Context Package` when a provider handoff has generated a local context path.
+- The viewer reads generated files from `.automation-context/copilot/<branch>/capture/` in the configured WSL distro.
+- Supported viewer tabs are `summary.md`, `INSTRUCTIONS.md`, and `manifest.json`.
+- This gives reviewers and maintainers a dashboard-level audit trail for what evidence was sent to the configured agent before reading the final report or PR.
+
+2026-06-23 DocumentationPortal Devcontainer One-Click Bootstrap:
+
+- Updated `/workspaces/DocumentationPortal-#12.0` devcontainer setup so it no longer depends on bind-mounting a local `C:\CM-REPO\Content\CM-AI-Content-Skills` checkout.
+- The target repository helper `.devcontainer/common/tfs-autonomous-pipeline.sh` now clones or updates the central `CM-AI-Content-Skills` repository from Git, using `CONTENT_AI_REPO_URL`, `CONTENT_AI_BRANCH`, `CONTENT_AI_REPO_PATH`, and `CONTENT_AI_TARGET_WORKSPACE`.
+- Both `01-light` and `02-full` devcontainer profiles now configure the central repository URL, branch, clone path, target workspace, and pipeline port through `containerEnv`.
+- The target repository `post-create.sh` now runs the pipeline helper unconditionally when present, so opening the repo in a devcontainer prepares the pipeline automatically.
+- Removed legacy Streamlit dashboard tasks from the target repo because Cherry Picks are now integrated in the FastAPI pipeline dashboard.
+- Added a `TFS Autonomous Pipeline - Sync Assets` VS Code task in the target repo.
+- The central pipeline now supports an ignored local config file, `config/tfs_dashboard.local.json`, and reads/writes it when present.
+- The central devcontainer bootstrap now creates `.env` from `.env.example` when missing, writes local dashboard runtime defaults for the devcontainer, creates `config/tfs_dashboard.local.json` with the active portal workspace set to `/app`, syncs managed assets, and excludes `.agents/content-ai/`, `.automation-context/`, and `.automation-reports/` locally from the target repo Git index.
+- Current devcontainer branch points to `CONTENT_AI_BRANCH=projects-initial-backup`. Change this to `main` after the central Content AI changes are merged.
+
+Next recommended tasks:
+
+1. Test the capture package on a real work item with linked implementation PRs and compare generated drafts against the previous flow.
+2. Rebuild `DocumentationPortal-#12.0` in VS Code devcontainer and verify that post-create clones the central repo, installs dependencies, syncs `.agents/content-ai/`, and starts the dashboard task without manual setup.
+3. Add a first-class dashboard view for captured PR details and local diffs if the `summary.md`/`manifest.json` view is not enough during review.
+4. Harden the dedicated worker/service deployment shape so production can run one continuous runner independently from the dashboard process.

@@ -8,16 +8,19 @@ from urllib.parse import unquote, urlparse
 
 APP_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = APP_DIR / "config" / "tfs_dashboard.json"
+LOCAL_CONFIG_PATH = APP_DIR / "config" / "tfs_dashboard.local.json"
 DATA_DIR = APP_DIR / "data"
 DB_PATH = DATA_DIR / "automation.db"
 ENV_PATH = APP_DIR / ".env"
 VS_CODE_SETTINGS_PATH = Path.home() / "AppData" / "Roaming" / "Code" / "User" / "settings.json"
-AUTH_OPTIONS = ["Windows Credentials", "PAT"]
+AUTH_OPTIONS = ["Windows Credentials", "Git Credentials", "PAT"]
 COPILOT_PERMISSION_LEVEL_OPTIONS = ["default", "autoApprove", "autopilot"]
 COPILOT_PROVIDER_OPTIONS = ["vscode", "codex_cli", "claude_cli", "custom_cli", "m365_desktop"]
 COPILOT_VSCODE_WINDOW_MODE_OPTIONS = ["reuse", "new"]
-DEFAULT_AGENT_PROMPT_TEMPLATE = """Read `{{context_path}}` and the adjacent HTML/JSON files, then implement the required documentation updates on the current branch.
-Inspect referenced specs and reference documentation when available.
+CONTEXT_CAPTURE_ROOT_MODE_OPTIONS = ["parent", "task"]
+DEFAULT_AGENT_PROMPT_TEMPLATE = """Read `{{context_path}}`, the adjacent HTML/JSON files, and the generated capture package when present.
+Start with `capture/INSTRUCTIONS.md` and `capture/summary.md` before inspecting repository files.
+Inspect referenced specs, linked pull request diffs, and reference documentation when available.
 Keep changes focused, consistent with the existing portal style, and avoid unrelated refactors.
 If a spec is used, record the spec name/path and the section or topic that justified the change.
 Finish with a reviewer-ready summary that explains what changed and why."""
@@ -35,6 +38,7 @@ PORTAL_TEMPLATE = {
     "lookback_days": 7,
     "max_prs_per_branch": 150,
     "verify_work_items_via_api": True,
+    "cherry_pick_skip_labels": ["No CP", "no-cp", "not to cp"],
     "auth_mode": "Windows Credentials",
 }
 DEFAULT_CONFIG = {
@@ -45,6 +49,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "server_host": "127.0.0.1",
     "server_port": 8000,
     "auto_port": True,
+    "tfs_request_timeout_seconds": 15,
     "automation_runner_enabled": True,
     "automation_reconcile_interval_seconds": 30,
     "automation_continuous_mode": False,
@@ -70,6 +75,11 @@ DEFAULT_RUNTIME_SETTINGS = {
     "copilot_vscode_global_auto_approve": True,
     "copilot_vscode_auto_accept_edits_delay_ms": 1000,
     "copilot_additional_read_access_folders": [],
+    "context_capture_enabled": True,
+    "context_capture_root_mode": "parent",
+    "context_capture_max_tree_items": 50,
+    "context_capture_include_pr_diffs": True,
+    "context_capture_workspace_scan_roots": ["/workspaces"],
     "default_reviewer_display_name": "",
     "default_reviewer_unique_name": "",
     "default_reviewer_id": "",
@@ -124,6 +134,18 @@ def _normalize_branch_chain(value: Any) -> List[str]:
     return [part.replace("refs/heads/", "") for part in parts if part]
 
 
+def _normalize_string_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.replace(",", "\n").splitlines()]
+    else:
+        parts = [str(part).strip() for part in value or []]
+    normalized: List[str] = []
+    for part in parts:
+        if part and part not in normalized:
+            normalized.append(part)
+    return normalized
+
+
 def normalize_portal_config(portal: Any, fallback_repository: Optional[str] = None) -> Dict[str, Any]:
     source = portal if isinstance(portal, dict) else {}
     repository = str(source.get("repository") or fallback_repository or PORTAL_TEMPLATE["repository"]).strip()
@@ -151,6 +173,9 @@ def normalize_portal_config(portal: Any, fallback_repository: Optional[str] = No
         "lookback_days": int(source.get("lookback_days", PORTAL_TEMPLATE["lookback_days"])),
         "max_prs_per_branch": int(source.get("max_prs_per_branch", PORTAL_TEMPLATE["max_prs_per_branch"])),
         "verify_work_items_via_api": bool(source.get("verify_work_items_via_api", PORTAL_TEMPLATE["verify_work_items_via_api"])),
+        "cherry_pick_skip_labels": _normalize_string_list(
+            source.get("cherry_pick_skip_labels", PORTAL_TEMPLATE["cherry_pick_skip_labels"])
+        ),
         "auth_mode": auth_mode,
     }
 
@@ -194,12 +219,14 @@ def normalize_app_config(raw_config: Any) -> Dict[str, Any]:
 
 
 def load_app_config() -> Dict[str, Any]:
-    return normalize_app_config(load_json(CONFIG_PATH, DEFAULT_CONFIG))
+    active_path = LOCAL_CONFIG_PATH if LOCAL_CONFIG_PATH.exists() else CONFIG_PATH
+    return normalize_app_config(load_json(active_path, DEFAULT_CONFIG))
 
 
 def save_app_config(config: Dict[str, Any]) -> Dict[str, Any]:
     normalized = normalize_app_config(config)
-    save_json(CONFIG_PATH, normalized)
+    active_path = LOCAL_CONFIG_PATH if LOCAL_CONFIG_PATH.exists() else CONFIG_PATH
+    save_json(active_path, normalized)
     return normalized
 
 
@@ -275,6 +302,7 @@ def save_env_values(values: Dict[str, str], path: Path = ENV_PATH) -> None:
         "DOC_AUTOMATION_SERVER_HOST",
         "DOC_AUTOMATION_SERVER_PORT",
         "DOC_AUTOMATION_SERVER_AUTO_PORT",
+        "DOC_AUTOMATION_TFS_REQUEST_TIMEOUT_SECONDS",
         "DOC_AUTOMATION_RUNNER_ENABLED",
         "DOC_AUTOMATION_RECONCILE_INTERVAL_SECONDS",
         "DOC_AUTOMATION_CONTINUOUS_MODE",
@@ -300,6 +328,11 @@ def save_env_values(values: Dict[str, str], path: Path = ENV_PATH) -> None:
         "DOC_AUTOMATION_COPILOT_VSCODE_GLOBAL_AUTO_APPROVE",
         "DOC_AUTOMATION_COPILOT_VSCODE_AUTO_ACCEPT_EDITS_DELAY_MS",
         "DOC_AUTOMATION_COPILOT_ADDITIONAL_READ_ACCESS_FOLDERS_JSON",
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_ENABLED",
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_ROOT_MODE",
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_MAX_TREE_ITEMS",
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_INCLUDE_PR_DIFFS",
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON",
         "DOC_AUTOMATION_DEFAULT_REVIEWER_DISPLAY_NAME",
         "DOC_AUTOMATION_DEFAULT_REVIEWER_UNIQUE_NAME",
         "DOC_AUTOMATION_DEFAULT_REVIEWER_ID",
@@ -408,9 +441,19 @@ def load_runtime_settings() -> Dict[str, Any]:
     except json.JSONDecodeError as exc:
         additional_folders_value = []
         additional_folders_error = str(exc)
+    capture_scan_roots_raw = raw.get("DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON", "").strip()
+    capture_scan_roots_error = ""
+    try:
+        capture_scan_roots_value = json.loads(capture_scan_roots_raw) if capture_scan_roots_raw else []
+    except json.JSONDecodeError as exc:
+        capture_scan_roots_value = []
+        capture_scan_roots_error = str(exc)
     overrides = normalize_reviewer_overrides(overrides_value)
     content_team_members = normalize_string_list(members_value)
     additional_read_access_folders = normalize_string_list(additional_folders_value)
+    context_capture_scan_roots = normalize_string_list(capture_scan_roots_value)
+    if not context_capture_scan_roots and not capture_scan_roots_error:
+        context_capture_scan_roots = list(DEFAULT_RUNTIME_SETTINGS["context_capture_workspace_scan_roots"])
     permission_level = str(
         raw.get("DOC_AUTOMATION_COPILOT_VSCODE_PERMISSION_LEVEL")
         or DEFAULT_RUNTIME_SETTINGS["copilot_vscode_permission_level"]
@@ -426,10 +469,26 @@ def load_runtime_settings() -> Dict[str, Any]:
     ).strip()
     if copilot_vscode_window_mode not in COPILOT_VSCODE_WINDOW_MODE_OPTIONS:
         copilot_vscode_window_mode = DEFAULT_RUNTIME_SETTINGS["copilot_vscode_window_mode"]
+    context_capture_root_mode = str(
+        raw.get("DOC_AUTOMATION_CONTEXT_CAPTURE_ROOT_MODE")
+        or DEFAULT_RUNTIME_SETTINGS["context_capture_root_mode"]
+    ).strip()
+    if context_capture_root_mode not in CONTEXT_CAPTURE_ROOT_MODE_OPTIONS:
+        context_capture_root_mode = DEFAULT_RUNTIME_SETTINGS["context_capture_root_mode"]
     return {
         "server_host": str(raw.get("DOC_AUTOMATION_SERVER_HOST") or DEFAULT_RUNTIME_SETTINGS["server_host"]).strip(),
         "server_port": parse_int(raw.get("DOC_AUTOMATION_SERVER_PORT"), DEFAULT_RUNTIME_SETTINGS["server_port"]),
         "auto_port": parse_bool(raw.get("DOC_AUTOMATION_SERVER_AUTO_PORT"), DEFAULT_RUNTIME_SETTINGS["auto_port"]),
+        "tfs_request_timeout_seconds": max(
+            5,
+            min(
+                120,
+                parse_int(
+                    raw.get("DOC_AUTOMATION_TFS_REQUEST_TIMEOUT_SECONDS"),
+                    DEFAULT_RUNTIME_SETTINGS["tfs_request_timeout_seconds"],
+                ),
+            ),
+        ),
         "automation_runner_enabled": parse_bool(
             raw.get("DOC_AUTOMATION_RUNNER_ENABLED"),
             DEFAULT_RUNTIME_SETTINGS["automation_runner_enabled"],
@@ -513,6 +572,28 @@ def load_runtime_settings() -> Dict[str, Any]:
         "copilot_additional_read_access_folders": additional_read_access_folders,
         "copilot_additional_read_access_folders_text": "\n".join(additional_read_access_folders),
         "copilot_additional_read_access_folders_error": additional_folders_error,
+        "context_capture_enabled": parse_bool(
+            raw.get("DOC_AUTOMATION_CONTEXT_CAPTURE_ENABLED"),
+            DEFAULT_RUNTIME_SETTINGS["context_capture_enabled"],
+        ),
+        "context_capture_root_mode": context_capture_root_mode,
+        "context_capture_max_tree_items": max(
+            1,
+            min(
+                200,
+                parse_int(
+                    raw.get("DOC_AUTOMATION_CONTEXT_CAPTURE_MAX_TREE_ITEMS"),
+                    DEFAULT_RUNTIME_SETTINGS["context_capture_max_tree_items"],
+                ),
+            ),
+        ),
+        "context_capture_include_pr_diffs": parse_bool(
+            raw.get("DOC_AUTOMATION_CONTEXT_CAPTURE_INCLUDE_PR_DIFFS"),
+            DEFAULT_RUNTIME_SETTINGS["context_capture_include_pr_diffs"],
+        ),
+        "context_capture_workspace_scan_roots": context_capture_scan_roots,
+        "context_capture_workspace_scan_roots_text": "\n".join(context_capture_scan_roots),
+        "context_capture_workspace_scan_roots_error": capture_scan_roots_error,
         "default_reviewer_display_name": str(
             raw.get("DOC_AUTOMATION_DEFAULT_REVIEWER_DISPLAY_NAME") or DEFAULT_RUNTIME_SETTINGS["default_reviewer_display_name"]
         ).strip(),
@@ -534,6 +615,7 @@ def save_runtime_settings(
     server_host: str,
     server_port: int,
     auto_port: bool,
+    tfs_request_timeout_seconds: int,
     automation_runner_enabled: bool,
     automation_reconcile_interval_seconds: int,
     automation_continuous_mode: bool,
@@ -559,6 +641,11 @@ def save_runtime_settings(
     copilot_vscode_global_auto_approve: bool,
     copilot_vscode_auto_accept_edits_delay_ms: int,
     copilot_additional_read_access_folders_text: str,
+    context_capture_enabled: bool,
+    context_capture_root_mode: str,
+    context_capture_max_tree_items: int,
+    context_capture_include_pr_diffs: bool,
+    context_capture_workspace_scan_roots_text: str,
     default_reviewer_display_name: str,
     default_reviewer_unique_name: str,
     default_reviewer_id: str,
@@ -568,6 +655,8 @@ def save_runtime_settings(
         raise ValueError("Server host cannot be empty.")
     if server_port < 1 or server_port > 65535:
         raise ValueError("Server port must be between 1 and 65535.")
+    if tfs_request_timeout_seconds < 5 or tfs_request_timeout_seconds > 120:
+        raise ValueError("TFS request timeout must be between 5 and 120 seconds.")
     if automation_reconcile_interval_seconds < 5 or automation_reconcile_interval_seconds > 3600:
         raise ValueError("Automation reconcile interval must be between 5 and 3600 seconds.")
     if automation_discovery_interval_minutes < 1 or automation_discovery_interval_minutes > 1440:
@@ -580,6 +669,10 @@ def save_runtime_settings(
         raise ValueError("Invalid VS Code window mode.")
     if copilot_vscode_auto_accept_edits_delay_ms < 0 or copilot_vscode_auto_accept_edits_delay_ms > 60000:
         raise ValueError("VS Code auto-accept edit delay must be between 0 and 60000 milliseconds.")
+    if str(context_capture_root_mode or "").strip() not in CONTEXT_CAPTURE_ROOT_MODE_OPTIONS:
+        raise ValueError("Invalid context capture root mode.")
+    if context_capture_max_tree_items < 1 or context_capture_max_tree_items > 200:
+        raise ValueError("Context capture max tree items must be between 1 and 200.")
 
     try:
         overrides_value = json.loads(reviewer_overrides_text.strip() or "{}")
@@ -587,12 +680,16 @@ def save_runtime_settings(
         raise ValueError(f"Reviewer overrides JSON is invalid: {exc}") from exc
     content_team_members = normalize_string_list(content_team_members_text)
     additional_read_access_folders = normalize_string_list(copilot_additional_read_access_folders_text)
+    context_capture_workspace_scan_roots = normalize_string_list(context_capture_workspace_scan_roots_text)
+    if not context_capture_workspace_scan_roots:
+        context_capture_workspace_scan_roots = list(DEFAULT_RUNTIME_SETTINGS["context_capture_workspace_scan_roots"])
 
     overrides = normalize_reviewer_overrides(overrides_value)
     env_values = {
         "DOC_AUTOMATION_SERVER_HOST": server_host.strip(),
         "DOC_AUTOMATION_SERVER_PORT": str(server_port),
         "DOC_AUTOMATION_SERVER_AUTO_PORT": "true" if auto_port else "false",
+        "DOC_AUTOMATION_TFS_REQUEST_TIMEOUT_SECONDS": str(tfs_request_timeout_seconds),
         "DOC_AUTOMATION_RUNNER_ENABLED": "true" if automation_runner_enabled else "false",
         "DOC_AUTOMATION_RECONCILE_INTERVAL_SECONDS": str(automation_reconcile_interval_seconds),
         "DOC_AUTOMATION_CONTINUOUS_MODE": "true" if automation_continuous_mode else "false",
@@ -618,6 +715,11 @@ def save_runtime_settings(
         "DOC_AUTOMATION_COPILOT_VSCODE_GLOBAL_AUTO_APPROVE": "true" if copilot_vscode_global_auto_approve else "false",
         "DOC_AUTOMATION_COPILOT_VSCODE_AUTO_ACCEPT_EDITS_DELAY_MS": str(copilot_vscode_auto_accept_edits_delay_ms),
         "DOC_AUTOMATION_COPILOT_ADDITIONAL_READ_ACCESS_FOLDERS_JSON": json.dumps(additional_read_access_folders, ensure_ascii=False),
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_ENABLED": "true" if context_capture_enabled else "false",
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_ROOT_MODE": context_capture_root_mode.strip(),
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_MAX_TREE_ITEMS": str(context_capture_max_tree_items),
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_INCLUDE_PR_DIFFS": "true" if context_capture_include_pr_diffs else "false",
+        "DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON": json.dumps(context_capture_workspace_scan_roots, ensure_ascii=False),
         "DOC_AUTOMATION_DEFAULT_REVIEWER_DISPLAY_NAME": default_reviewer_display_name.strip(),
         "DOC_AUTOMATION_DEFAULT_REVIEWER_UNIQUE_NAME": default_reviewer_unique_name.strip(),
         "DOC_AUTOMATION_DEFAULT_REVIEWER_ID": default_reviewer_id.strip(),

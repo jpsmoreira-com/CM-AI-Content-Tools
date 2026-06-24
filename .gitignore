@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 .streamlit/
 .env
+config/*.local.json
 data/

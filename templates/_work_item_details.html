@@ -163,6 +163,7 @@
             {% endif %}
             {% if item.copilot_context_path %}
             <span><strong>Context File:</strong> <code>{{ item.copilot_context_path }}</code></span>
+            <a class="button-link secondary" href="/work-items/{{ item.id }}/capture?portal={{ selected_portal }}&file=summary" target="_blank" rel="noreferrer noopener">View Context Package</a>
             {% endif %}
             {% if item.copilot_provider_log_path %}
             <span><strong>Provider Log:</strong> <code>{{ item.copilot_provider_log_path }}</code></span>

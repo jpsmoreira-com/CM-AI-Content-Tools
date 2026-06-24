@@ -14,7 +14,8 @@
                 <h1>{{ page_title }}</h1>
             </div>
             <nav class="top-nav" aria-label="Primary">
-                <a href="{{ request.url_for('dashboard') }}" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
+                <a href="{{ request.url_for('dashboard') }}" class="{% if active_page == 'dashboard' %}active{% endif %}">Automation</a>
+                <a href="{{ request.url_for('cherry_picks') }}?load=true{% if selected_portal %}&portal={{ selected_portal | urlencode }}{% endif %}" class="{% if active_page == 'cherry_picks' %}active{% endif %}" data-loading-profile="cherry-picks" data-loading-label="Loading Cherry Picks">Cherry Picks</a>
                 <a href="{{ request.url_for('settings_page') }}" class="{% if active_page == 'settings' %}active{% endif %}">Settings</a>
             </nav>
         </div>
@@ -118,6 +119,15 @@
                     ],
                 },
             ];
+            const linkStepProfiles = {
+                "cherry-picks": [
+                    "Loading portal configuration",
+                    "Querying pull requests from TFS",
+                    "Grouping propagation families",
+                    "Applying Cherry Pick filters",
+                    "Rendering the analysis",
+                ],
+            };
 
             function humanizeLabel(label) {
                 const value = (label || "").trim();
@@ -218,6 +228,22 @@
                 const submitter = event.submitter;
                 const label = submitter && submitter.textContent ? submitter.textContent : "Working...";
                 showOverlay(label, stepsForForm(form));
+            }, true);
+
+            document.addEventListener("click", function (event) {
+                const link = event.target.closest ? event.target.closest("a[data-loading-profile]") : null;
+                if (!link || event.defaultPrevented) {
+                    return;
+                }
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+                    return;
+                }
+                if (link.target && link.target !== "_self") {
+                    return;
+                }
+                const profileName = link.getAttribute("data-loading-profile");
+                const label = link.getAttribute("data-loading-label") || link.textContent || "Loading";
+                showOverlay(label, linkStepProfiles[profileName] || ["Loading page"]);
             }, true);
         }());
     </script>

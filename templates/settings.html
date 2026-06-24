@@ -2,8 +2,9 @@
 
 {% block content %}
 <section class="band">
-    <form method="get" action="{{ request.url_for('settings_page') }}" class="panel controls-panel">
-        <div class="settings-load-row">
+    <div class="panel settings-control-panel">
+        <form method="get" action="{{ request.url_for('settings_page') }}" class="settings-switch-form">
+            <input type="hidden" name="tab" value="{{ active_settings_tab }}">
             <label>
                 <span>Portal</span>
                 <select name="portal">
@@ -13,30 +14,33 @@
                 </select>
             </label>
             <div class="actions single-action">
-                <button type="submit">Load Settings</button>
+                <button type="submit">Load</button>
             </div>
-        </div>
-        <div class="settings-context-strip">
-            <div class="context-card">
-                <span class="label">Discovery Scope</span>
-                <strong>{{ portal.work_item_project }} / {{ portal.work_item_area_path or "-" }}</strong>
-                <span class="muted">Iteration team: {{ portal.work_item_team or "Optional / manual" }}</span>
-            </div>
-            <div class="context-card">
-                <span class="label">Target Repository</span>
+        </form>
+
+        <div class="settings-status-grid" aria-label="Settings summary">
+            <div>
+                <span class="metric-label">Target Repository</span>
                 <strong>{{ portal.project }}/{{ portal.repository }}</strong>
                 <span class="muted">Authentication: {{ portal.auth_mode }}</span>
             </div>
-            <div class="context-card">
-                <span class="label">Agent Workspace</span>
-                <span class="muted">CM GPT workspace: {{ portal.copilot_workspace_path or "Not configured" }}</span>
+            <div>
+                <span class="metric-label">Work Item Source</span>
+                <strong>{{ portal.work_item_project }}</strong>
+                <span class="muted">{{ portal.work_item_area_path or "No area path configured" }}</span>
             </div>
-            <div class="context-card">
-                <span class="label">Runtime</span>
-                <span class="muted">Runtime file: <code>{{ runtime_settings.env_path }}</code></span>
+            <div>
+                <span class="metric-label">Agent Provider</span>
+                <strong>{{ runtime_settings.copilot_provider }}</strong>
+                <span class="muted">{{ runtime_settings.copilot_model_name or "No model configured" }}</span>
+            </div>
+            <div>
+                <span class="metric-label">Runner</span>
+                <strong>{{ "Enabled" if runtime_settings.automation_runner_enabled else "Disabled" }}</strong>
+                <span class="muted">Performance log: <code>data/performance.log</code></span>
             </div>
         </div>
-    </form>
+    </div>
 </section>
 
 {% if message %}
@@ -46,138 +50,183 @@
 {% endif %}
 
 <section class="band">
-    <div class="panel settings-overview">
-        <div class="settings-overview-main">
-            <div>
-                <span class="metric-label">Current Portal</span>
-                <strong>{{ selected_portal }}</strong>
-            </div>
-            <div>
-                <span class="metric-label">Agent Provider</span>
-                <strong>{{ runtime_settings.copilot_provider }}</strong>
-            </div>
-            <div>
-                <span class="metric-label">Runner</span>
-                <strong>{{ "Enabled" if runtime_settings.automation_runner_enabled else "Disabled" }}</strong>
-            </div>
-            <div>
-                <span class="metric-label">Performance Log</span>
-                <strong><code>data/performance.log</code></strong>
-            </div>
-        </div>
-        <nav class="settings-jump-list" aria-label="Settings sections">
-            <a href="#portal-settings">Portal</a>
-            <a href="#agent-settings">Agent</a>
-            <a href="#team-settings">Team</a>
-            <a href="#runner-settings">Runner</a>
-            <a href="#server-settings">Server</a>
-        </nav>
-    </div>
+    <nav class="panel settings-tabs" aria-label="Settings sections">
+        <a href="{{ request.url_for('settings_page') }}?portal={{ selected_portal | urlencode }}&amp;tab=connection" class="settings-tab-link {% if active_settings_tab == 'connection' %}active{% endif %}">
+            <strong>Connection</strong>
+            <span>Shared TFS, repository, and branch-chain settings</span>
+        </a>
+        <a href="{{ request.url_for('settings_page') }}?portal={{ selected_portal | urlencode }}&amp;tab=automation" class="settings-tab-link {% if active_settings_tab == 'automation' %}active{% endif %}">
+            <strong>Automation</strong>
+            <span>Work item, reviewer, and agent execution settings</span>
+        </a>
+        <a href="{{ request.url_for('settings_page') }}?portal={{ selected_portal | urlencode }}&amp;tab=cherry-picks" class="settings-tab-link {% if active_settings_tab == 'cherry-picks' %}active{% endif %}">
+            <strong>Cherry Picks</strong>
+            <span>Read-only propagation dashboard defaults</span>
+        </a>
+        <a href="{{ request.url_for('settings_page') }}?portal={{ selected_portal | urlencode }}&amp;tab=runtime" class="settings-tab-link {% if active_settings_tab == 'runtime' %}active{% endif %}">
+            <strong>Runtime</strong>
+            <span>Dashboard process, worker, and service controls</span>
+        </a>
+    </nav>
 </section>
 
 <section class="band">
-    <form method="post" action="/settings/portal" class="panel settings-panel" id="portal-settings">
+    <form method="post" action="/settings/portal" class="panel settings-panel settings-tab-form {% if active_settings_tab not in ['connection', 'cherry-picks'] %}is-hidden{% endif %}">
         <input type="hidden" name="current_repository" value="{{ selected_portal }}">
-        <div class="section-header">
-            <div>
-                <h2>Portal Configuration</h2>
-                <p>Set where work items come from, where documentation branches are created, and which branch chain is available for this portal.</p>
+        <input type="hidden" name="active_settings_tab" value="{{ active_settings_tab }}">
+
+        <div class="settings-tab-panel {% if active_settings_tab != 'connection' %}is-hidden{% endif %}">
+            <div class="section-header">
+                <div>
+                    <h2>Connection Settings</h2>
+                    <p>Shared configuration used by the Automation and Cherry Picks dashboards.</p>
+                </div>
+            </div>
+
+            <div class="settings-stack">
+                <section class="settings-group">
+                    <div class="settings-group-header">
+                        <h3>Work Item Source</h3>
+                        <p>Candidate work items are loaded from this project and area path. The iteration team is optional and is only used for automatic sprint detection.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label>
+                            <span>Work Item Project</span>
+                            <input type="text" name="work_item_project" value="{{ portal.work_item_project }}">
+                        </label>
+                        <label>
+                            <span>Discovery Area Path</span>
+                            <input type="text" name="work_item_area_path" value="{{ portal.work_item_area_path }}">
+                        </label>
+                        <label>
+                            <span>Iteration Resolution Team (Optional)</span>
+                            <input type="text" name="work_item_team" value="{{ portal.work_item_team }}">
+                        </label>
+                    </div>
+                    <p class="hint">Recommended discovery scope: <code>Product\Development</code>. Use an iteration team such as <code>Development</code> only if you want the app to try automatic sprint detection.</p>
+                </section>
+
+                <section class="settings-group">
+                    <div class="settings-group-header">
+                        <h3>Target Repository</h3>
+                        <p>These values define where work branches and draft PRs are created, and which workspace the agent should use for local branch checkout.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label>
+                            <span>Base URL</span>
+                            <input type="text" name="base_url" value="{{ portal.base_url }}">
+                        </label>
+                        <label>
+                            <span>Repository Project</span>
+                            <input type="text" name="project" value="{{ portal.project }}">
+                        </label>
+                        <label>
+                            <span>Repository Name</span>
+                            <input type="text" name="repository" value="{{ portal.repository }}">
+                        </label>
+                        <label>
+                            <span>Authentication Mode</span>
+                            <select name="auth_mode">
+                                {% for option in auth_options %}
+                                <option value="{{ option }}" {% if option == portal.auth_mode %}selected{% endif %}>{{ option }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label>
+                            <span>API Version</span>
+                            <input type="text" name="api_version" value="{{ portal.api_version }}">
+                        </label>
+                        <label class="full-width">
+                            <span>Agent Workspace Path</span>
+                            <input type="text" name="copilot_workspace_path" value="{{ portal.copilot_workspace_path }}" placeholder="\\\\wsl.localhost\\Ubuntu\\workspaces\\DocumentationPortal-#01">
+                        </label>
+                    </div>
+                    <p class="hint">The workspace path can be a Linux path such as <code>/workspaces/DocumentationPortal-#01</code>, a home-relative path such as <code>~/workspaces/DocumentationPortal-#01</code>, or a Windows UNC path such as <code>\\wsl.localhost\Ubuntu\workspaces\DocumentationPortal-#01</code>.</p>
+                </section>
+
+                <section class="settings-group">
+                    <div class="settings-group-header">
+                        <h3>Shared Branch Chain</h3>
+                        <p>The chain feeds base-branch selection for automation and expected propagation branches for Cherry Picks.</p>
+                    </div>
+                    <label class="full-width">
+                        <span>Branch Chain</span>
+                        <textarea name="branch_chain_text" rows="8">{{ portal.branch_chain|join('\n') }}</textarea>
+                    </label>
+                </section>
+            </div>
+
+            <div class="actions">
+                <button type="submit">Save Connection Settings</button>
             </div>
         </div>
-        <div class="settings-stack">
-            <section class="settings-group">
-                <div class="settings-group-header">
-                    <h3>Work Item Discovery</h3>
-                    <p>Candidate work items are loaded from this project and area path. The iteration team is optional and is only used for automatic sprint detection.</p>
-                </div>
-                <div class="settings-grid">
-                    <label>
-                        <span>Work Item Project</span>
-                        <input type="text" name="work_item_project" value="{{ portal.work_item_project }}">
-                    </label>
-                    <label>
-                        <span>Discovery Area Path</span>
-                        <input type="text" name="work_item_area_path" value="{{ portal.work_item_area_path }}">
-                    </label>
-                    <label>
-                        <span>Iteration Resolution Team (Optional)</span>
-                        <input type="text" name="work_item_team" value="{{ portal.work_item_team }}">
-                    </label>
-                </div>
-                <p class="hint">Recommended discovery scope: <code>Product\Development</code>. Use an iteration team such as <code>Development</code> only if you want the app to try automatic sprint detection.</p>
-            </section>
 
-            <section class="settings-group">
-                <div class="settings-group-header">
-                    <h3>Target Repository</h3>
-                    <p>These values define where work branches and draft PRs are created, and which WSL workspace CM GPT should use for the local branch checkout.</p>
+        <div class="settings-tab-panel {% if active_settings_tab != 'cherry-picks' %}is-hidden{% endif %}">
+            <div class="section-header">
+                <div>
+                    <h2>Cherry Picks Settings</h2>
+                    <p>Defaults for the read-only PR propagation analysis dashboard.</p>
                 </div>
-                <div class="settings-grid">
-                    <label>
-                        <span>Base URL</span>
-                        <input type="text" name="base_url" value="{{ portal.base_url }}">
-                    </label>
-                    <label>
-                        <span>Repository Project</span>
-                        <input type="text" name="project" value="{{ portal.project }}">
-                    </label>
-                    <label>
-                        <span>Repository Name</span>
-                        <input type="text" name="repository" value="{{ portal.repository }}">
-                    </label>
-                    <label>
-                        <span>Authentication Mode</span>
-                        <select name="auth_mode">
-                            {% for option in auth_options %}
-                            <option value="{{ option }}" {% if option == portal.auth_mode %}selected{% endif %}>{{ option }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label>
-                        <span>API Version</span>
-                        <input type="text" name="api_version" value="{{ portal.api_version }}">
-                    </label>
+            </div>
+
+            <div class="settings-stack">
+                <section class="settings-group">
+                    <div class="settings-group-header">
+                        <h3>Analysis Defaults</h3>
+                        <p>These values control how much pull-request history is inspected when the Cherry Picks page loads.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label>
+                            <span>Lookback Days</span>
+                            <input type="number" name="lookback_days" min="0" max="5000" value="{{ portal.lookback_days }}">
+                        </label>
+                        <label>
+                            <span>Max PRs Per Branch</span>
+                            <input type="number" name="max_prs_per_branch" min="20" max="1000" value="{{ portal.max_prs_per_branch }}">
+                        </label>
+                        <label class="checkbox-field">
+                            <span>Verify Linked Work Items Via API</span>
+                            <input type="checkbox" name="verify_work_items_via_api" value="true" {% if portal.verify_work_items_via_api %}checked{% endif %}>
+                        </label>
+                    </div>
                     <label class="full-width">
-                        <span>CM GPT Workspace Path In WSL</span>
-                        <input type="text" name="copilot_workspace_path" value="{{ portal.copilot_workspace_path }}" placeholder="\\\\wsl.localhost\\Ubuntu\\workspaces\\DocumentationPortal-#01">
+                        <span>Skip Labels</span>
+                        <textarea name="cherry_pick_skip_labels_text" rows="4" placeholder="One PR label per line.">{{ portal.cherry_pick_skip_labels|join('\n') }}</textarea>
                     </label>
-                </div>
-                <p class="hint">The workspace path can be a Linux path such as <code>/workspaces/DocumentationPortal-#01</code>, a home-relative path such as <code>~/workspaces/DocumentationPortal-#01</code>, or a Windows UNC path such as <code>\\wsl.localhost\Ubuntu\workspaces\DocumentationPortal-#01</code>.</p>
-            </section>
+                    <p class="hint">Pull requests with one of these labels are excluded from the Cherry Pick propagation analysis. Matching ignores case, spaces, hyphens, and underscores.</p>
+                </section>
 
-            <section class="settings-group">
-                <div class="settings-group-header">
-                    <h3>Branching Rules</h3>
-                    <p>Use these controls to define which branches can be selected and how much PR history is inspected.</p>
-                </div>
-                <div class="settings-grid">
-                    <label>
-                        <span>Lookback Days</span>
-                        <input type="number" name="lookback_days" min="0" max="5000" value="{{ portal.lookback_days }}">
-                    </label>
-                    <label>
-                        <span>Max PRs Per Branch</span>
-                        <input type="number" name="max_prs_per_branch" min="20" max="1000" value="{{ portal.max_prs_per_branch }}">
-                    </label>
-                </div>
-                <label class="full-width">
-                    <span>Branch Chain</span>
-                    <textarea name="branch_chain_text" rows="8">{{ portal.branch_chain|join('\n') }}</textarea>
-                </label>
-            </section>
-        </div>
-        <input type="hidden" name="verify_work_items_via_api" value="true">
-        <div class="actions">
-            <button type="submit">Save Portal Settings</button>
+                <section class="settings-group">
+                    <div class="settings-group-header">
+                        <h3>Propagation Branches</h3>
+                        <p>The Cherry Picks dashboard reads this shared branch chain from the Connection tab.</p>
+                    </div>
+                    {% if portal.branch_chain %}
+                    <div class="branch-chain-preview">
+                        {% for branch_name in portal.branch_chain %}
+                        <span>{{ branch_name }}</span>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="empty-state compact">No branch chain is configured yet.</p>
+                    {% endif %}
+                    <p class="hint">Edit branch names in the Connection tab so both dashboards keep using the same branch model.</p>
+                </section>
+            </div>
+
+            <div class="actions">
+                <button type="submit">Save Cherry Picks Settings</button>
+            </div>
         </div>
     </form>
 </section>
 
-{% if portal.auth_mode == "PAT" %}
+{% if portal.auth_mode == "PAT" and active_settings_tab == "connection" %}
 <section class="band">
     <form method="post" action="/auth/pat" class="panel settings-panel">
         <input type="hidden" name="portal" value="{{ selected_portal }}">
         <input type="hidden" name="redirect_target" value="settings">
+        <input type="hidden" name="active_settings_tab" value="connection">
         <div class="settings-group-header">
             <h2>Authentication</h2>
             <p>This portal uses PAT authentication. The token is stored in runtime memory for the current session only.</p>
@@ -196,265 +245,331 @@
 {% endif %}
 
 <section class="band">
-    <form method="post" action="/settings/runtime" class="panel settings-panel" id="automation-settings">
+    <form method="post" action="/settings/runtime" class="panel settings-panel settings-tab-form {% if active_settings_tab not in ['automation', 'runtime'] %}is-hidden{% endif %}">
         <input type="hidden" name="portal" value="{{ selected_portal }}">
-        <div class="section-header">
-            <div>
-                <h2>Automation Settings</h2>
-                <p>Stored in <code>{{ runtime_settings.env_path }}</code>. These values control team-member discovery, reviewer resolution, sprint defaults, and local server behavior.</p>
+        <input type="hidden" name="active_settings_tab" value="{{ active_settings_tab }}">
+
+        <div class="settings-tab-panel {% if active_settings_tab != 'automation' %}is-hidden{% endif %}">
+            <div class="section-header">
+                <div>
+                    <h2>Automation Settings</h2>
+                    <p>Work item discovery, reviewer resolution, and agent execution settings stored in <code>{{ runtime_settings.env_path }}</code>.</p>
+                </div>
+            </div>
+
+            <div class="settings-stack">
+                <section class="settings-group" id="team-settings">
+                    <div class="settings-group-header">
+                        <h3>Work Item Discovery Defaults</h3>
+                        <p>List the Content team members whose assigned tasks should appear in the dashboard. You can also choose whether the dashboard should default to the current sprint filter.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label class="checkbox-field">
+                            <span>Default To Current Iteration Only</span>
+                            <input type="checkbox" name="default_current_iteration_only" value="true" {% if runtime_settings.default_current_iteration_only %}checked{% endif %}>
+                        </label>
+                    </div>
+                    <label class="full-width">
+                        <span>Content Team Members</span>
+                        <textarea
+                            name="content_team_members_text"
+                            rows="8"
+                            placeholder="One display name or unique name per line."
+                        >{{ runtime_settings.content_team_members_text }}</textarea>
+                    </label>
+                    {% if runtime_settings.content_team_members_error %}
+                    <p class="hint error">The current Content team member list could not be parsed: {{ runtime_settings.content_team_members_error }}</p>
+                    {% endif %}
+                </section>
+
+                <section class="settings-group" id="reviewer-settings">
+                    <div class="settings-group-header">
+                        <h3>Reviewer Resolution</h3>
+                        <p>These values are used when a work item assignee does not map cleanly to a TFS reviewer identity.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label>
+                            <span>Default Reviewer Name</span>
+                            <input type="text" name="default_reviewer_display_name" value="{{ runtime_settings.default_reviewer_display_name }}">
+                        </label>
+                        <label>
+                            <span>Default Reviewer Unique Name</span>
+                            <input type="text" name="default_reviewer_unique_name" value="{{ runtime_settings.default_reviewer_unique_name }}">
+                        </label>
+                        <label>
+                            <span>Default Reviewer ID</span>
+                            <input type="text" name="default_reviewer_id" value="{{ runtime_settings.default_reviewer_id }}">
+                        </label>
+                    </div>
+                    <label class="full-width">
+                        <span>Reviewer Overrides JSON</span>
+                        <textarea
+                            name="reviewer_overrides_text"
+                            rows="12"
+                            placeholder='{"John Doe": {"display_name": "John Doe", "unique_name": "john.doe@company.com", "id": ""}}'
+                        >{{ runtime_settings.reviewer_overrides_text }}</textarea>
+                    </label>
+                    {% if runtime_settings.reviewer_overrides_error %}
+                    <p class="hint error">The current overrides JSON could not be parsed: {{ runtime_settings.reviewer_overrides_error }}</p>
+                    {% endif %}
+                </section>
+
+                <section class="settings-group" id="agent-settings">
+                    <div class="settings-group-header">
+                        <h3>Agent Integration</h3>
+                        <p>These values control the approved automatic executor that applies changes on the work branch.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label>
+                            <span>WSL Distro</span>
+                            <input type="text" name="copilot_wsl_distro" value="{{ runtime_settings.copilot_wsl_distro }}" placeholder="Ubuntu">
+                        </label>
+                        <label>
+                            <span>Agent Provider</span>
+                            <select name="copilot_provider">
+                                {% for option in copilot_provider_options %}
+                                <option value="{{ option }}" {% if option == runtime_settings.copilot_provider %}selected{% endif %}>
+                                    {% if option == "m365_desktop" %}Microsoft 365 Copilot Desktop (not automation-capable){% elif option == "codex_cli" %}Codex CLI{% elif option == "claude_cli" %}Claude CLI{% elif option == "custom_cli" %}Custom CLI{% else %}VS Code Copilot{% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label>
+                            <span>Model Name</span>
+                            <input
+                                type="text"
+                                name="copilot_model_name"
+                                value="{{ runtime_settings.copilot_model_name }}"
+                                placeholder="CM GPT"
+                                list="copilot-model-options"
+                            >
+                            <datalist id="copilot-model-options">
+                                <option value="CM GPT"></option>
+                                <option value="Auto"></option>
+                                <option value="Claude Haiku 4.5"></option>
+                                <option value="GPT-4.1"></option>
+                                <option value="GPT-4o"></option>
+                                <option value="GPT-5 mini"></option>
+                                <option value="Raptor mini (Preview)"></option>
+                            </datalist>
+                        </label>
+                        <label>
+                            <span>Agent Name</span>
+                            <input type="text" name="copilot_agent_name" value="{{ runtime_settings.copilot_agent_name }}" placeholder="CM GPT">
+                        </label>
+                        <label class="checkbox-field">
+                            <span>Run Executor Automatically</span>
+                            <input type="checkbox" name="copilot_auto_launch" value="true" {% if runtime_settings.copilot_auto_launch %}checked{% endif %}>
+                        </label>
+                        <label class="checkbox-field">
+                            <span>Strict CM GPT Safety Mode</span>
+                            <input type="checkbox" name="copilot_strict_model_safety" value="true" {% if runtime_settings.copilot_strict_model_safety %}checked{% endif %}>
+                        </label>
+                        <label class="checkbox-field">
+                            <span>Open Workspace In WSL Remote</span>
+                            <input type="checkbox" name="copilot_open_wsl_remote" value="true" {% if runtime_settings.copilot_open_wsl_remote %}checked{% endif %}>
+                        </label>
+                        <label>
+                            <span>VS Code Window Mode</span>
+                            <select name="copilot_vscode_window_mode">
+                                {% for option in copilot_vscode_window_mode_options %}
+                                <option value="{{ option }}" {% if option == runtime_settings.copilot_vscode_window_mode %}selected{% endif %}>{{ "Reuse active window" if option == "reuse" else "Open new window" }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="full-width">
+                            <span>Microsoft 365 Copilot URL</span>
+                            <input type="text" name="copilot_desktop_url" value="{{ runtime_settings.copilot_desktop_url }}" placeholder="https://m365.cloud.microsoft/chat">
+                        </label>
+                        <label class="full-width">
+                            <span>Reference Documentation Workspace Path</span>
+                            <input type="text" name="copilot_reference_docs_path" value="{{ runtime_settings.copilot_reference_docs_path }}" placeholder="/workspaces/Documentation">
+                        </label>
+                        <label class="full-width">
+                            <span>Final Reports Path</span>
+                            <input type="text" name="final_reports_path" value="{{ runtime_settings.final_reports_path }}" placeholder="data/reports">
+                        </label>
+                        <label class="full-width">
+                            <span>Initial Agent Prompt Template</span>
+                            <textarea
+                                name="copilot_prompt_template"
+                                rows="8"
+                                placeholder="Use {{ '{{context_path}}' }}, {{ '{{agent_result_path}}' }}, {{ '{{workspace_path}}' }}, {{ '{{branch_name}}' }}, {{ '{{model_name}}' }}, or {{ '{{provider}}' }} as placeholders."
+                            >{{ runtime_settings.copilot_prompt_template }}</textarea>
+                        </label>
+                        <label class="full-width">
+                            <span>CLI Command Template</span>
+                            <textarea
+                                name="copilot_cli_command_template"
+                                rows="4"
+                                placeholder="Required for Codex, Claude, or Custom CLI providers. Example: your-command --prompt {{ '{{prompt_path}}' }}. Use {{ '{{workspace_unc_path}}' }} for Windows executors."
+                            >{{ runtime_settings.copilot_cli_command_template }}</textarea>
+                        </label>
+                    </div>
+                    <p class="hint">VS Code Copilot is the current automatic executor. Codex, Claude, and Custom CLI providers run the configured command template in WSL and must write the expected <code>agent-result.json</code>. Microsoft 365 Copilot Desktop is listed for visibility, but the pipeline blocks it until an approved automation connector is available.</p>
+                </section>
+
+                <section class="settings-group" id="context-capture-settings">
+                    <div class="settings-group-header">
+                        <h3>Context Capture</h3>
+                        <p>Generate a richer evidence package for the agent before it edits the work branch.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label class="checkbox-field">
+                            <span>Enable Rich Capture</span>
+                            <input type="checkbox" name="context_capture_enabled" value="true" {% if runtime_settings.context_capture_enabled %}checked{% endif %}>
+                        </label>
+                        <label>
+                            <span>Capture Root</span>
+                            <select name="context_capture_root_mode">
+                                {% for option in context_capture_root_mode_options %}
+                                <option value="{{ option }}" {% if option == runtime_settings.context_capture_root_mode %}selected{% endif %}>{{ "Parent work item when available" if option == "parent" else "Selected task only" }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label>
+                            <span>Max Work Items In Tree</span>
+                            <input type="number" name="context_capture_max_tree_items" min="1" max="200" value="{{ runtime_settings.context_capture_max_tree_items }}">
+                        </label>
+                        <label class="checkbox-field">
+                            <span>Include Local PR Diffs</span>
+                            <input type="checkbox" name="context_capture_include_pr_diffs" value="true" {% if runtime_settings.context_capture_include_pr_diffs %}checked{% endif %}>
+                        </label>
+                    </div>
+                    <label class="full-width">
+                        <span>Workspace Scan Roots</span>
+                        <textarea
+                            name="context_capture_workspace_scan_roots_text"
+                            rows="4"
+                            placeholder="One path per line. Example: /workspaces"
+                        >{{ runtime_settings.context_capture_workspace_scan_roots_text }}</textarea>
+                    </label>
+                    {% if runtime_settings.context_capture_workspace_scan_roots_error %}
+                    <p class="hint error">The current scan-root list could not be parsed: {{ runtime_settings.context_capture_workspace_scan_roots_error }}</p>
+                    {% endif %}
+                    <p class="hint">The capture package is written under <code>.automation-context/copilot/&lt;branch&gt;/capture/</code>. Local diffs are captured only when a matching repository clone is found under the workspace path or one of the scan roots.</p>
+                </section>
+
+                <section class="settings-group" id="vscode-settings">
+                    <div class="settings-group-header">
+                        <h3>VS Code Copilot Permissions</h3>
+                        <p>Use these settings to preconfigure the local VS Code chat session with a higher permission level and read access to external reference folders such as the shared Documentation repository.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label class="checkbox-field">
+                            <span>Apply These Settings To Local VS Code</span>
+                            <input type="checkbox" name="copilot_vscode_apply_settings" value="true" {% if runtime_settings.copilot_vscode_apply_settings %}checked{% endif %}>
+                        </label>
+                        <label>
+                            <span>Default Permission Level</span>
+                            <select name="copilot_vscode_permission_level">
+                                {% for option in copilot_permission_level_options %}
+                                <option value="{{ option }}" {% if option == runtime_settings.copilot_vscode_permission_level %}selected{% endif %}>{{ option }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="checkbox-field">
+                            <span>Enable Global Tool Auto-Approve</span>
+                            <input type="checkbox" name="copilot_vscode_global_auto_approve" value="true" {% if runtime_settings.copilot_vscode_global_auto_approve %}checked{% endif %}>
+                        </label>
+                        <label>
+                            <span>Auto-Accept Edit Delay (ms)</span>
+                            <input type="number" name="copilot_vscode_auto_accept_edits_delay_ms" min="0" max="60000" value="{{ runtime_settings.copilot_vscode_auto_accept_edits_delay_ms }}">
+                        </label>
+                        <label class="full-width">
+                            <span>VS Code User Settings Path</span>
+                            <input type="text" name="copilot_vscode_settings_path" value="{{ runtime_settings.copilot_vscode_settings_path }}" placeholder="C:\Users\name\AppData\Roaming\Code\User\settings.json">
+                        </label>
+                    </div>
+                    <label class="full-width">
+                        <span>Additional Read-Access Folders</span>
+                        <textarea
+                            name="copilot_additional_read_access_folders_text"
+                            rows="6"
+                            placeholder="One folder per line. WSL paths, UNC paths, and Windows paths are supported."
+                        >{{ runtime_settings.copilot_additional_read_access_folders_text }}</textarea>
+                    </label>
+                    {% if runtime_settings.copilot_additional_read_access_folders_error %}
+                    <p class="hint error">The current additional read-access folder list could not be parsed: {{ runtime_settings.copilot_additional_read_access_folders_error }}</p>
+                    {% endif %}
+                    <p class="hint">Effective VS Code settings path: <code>{{ runtime_settings.copilot_vscode_effective_settings_path }}</code></p>
+                    <p class="hint">Derived read-access folders that will be written to VS Code: <code>{{ runtime_settings.copilot_vscode_derived_read_access_folders|join(", ") if runtime_settings.copilot_vscode_derived_read_access_folders else "None" }}</code></p>
+                </section>
+            </div>
+
+            <div class="actions">
+                <button type="submit">Save Automation Settings</button>
             </div>
         </div>
-        <div class="settings-stack">
-            <section class="settings-group" id="team-settings">
-                <div class="settings-group-header">
-                    <h3>Work Item Discovery Defaults</h3>
-                    <p>List the Content team members whose assigned tasks should appear in the dashboard. You can also choose whether the dashboard should default to the current sprint filter.</p>
-                </div>
-                <div class="settings-grid">
-                    <label class="checkbox-field">
-                        <span>Default To Current Iteration Only</span>
-                        <input type="checkbox" name="default_current_iteration_only" value="true" {% if runtime_settings.default_current_iteration_only %}checked{% endif %}>
-                    </label>
-                </div>
-                <label class="full-width">
-                    <span>Content Team Members</span>
-                    <textarea
-                        name="content_team_members_text"
-                        rows="8"
-                        placeholder="One display name or unique name per line."
-                    >{{ runtime_settings.content_team_members_text }}</textarea>
-                </label>
-                {% if runtime_settings.content_team_members_error %}
-                <p class="hint error">The current Content team member list could not be parsed: {{ runtime_settings.content_team_members_error }}</p>
-                {% endif %}
-            </section>
 
-            <section class="settings-group" id="reviewer-settings">
-                <div class="settings-group-header">
-                    <h3>Reviewer Resolution</h3>
-                    <p>These values are used when a work item assignee does not map cleanly to a TFS reviewer identity.</p>
+        <div class="settings-tab-panel {% if active_settings_tab != 'runtime' %}is-hidden{% endif %}">
+            <div class="section-header">
+                <div>
+                    <h2>Runtime Settings</h2>
+                    <p>Local dashboard process, worker reconciliation, and service controls.</p>
                 </div>
-                <div class="settings-grid">
-                    <label>
-                        <span>Default Reviewer Name</span>
-                        <input type="text" name="default_reviewer_display_name" value="{{ runtime_settings.default_reviewer_display_name }}">
-                    </label>
-                    <label>
-                        <span>Default Reviewer Unique Name</span>
-                        <input type="text" name="default_reviewer_unique_name" value="{{ runtime_settings.default_reviewer_unique_name }}">
-                    </label>
-                    <label>
-                        <span>Default Reviewer ID</span>
-                        <input type="text" name="default_reviewer_id" value="{{ runtime_settings.default_reviewer_id }}">
-                    </label>
-                </div>
-                <label class="full-width">
-                    <span>Reviewer Overrides JSON</span>
-                    <textarea
-                        name="reviewer_overrides_text"
-                        rows="12"
-                        placeholder='{"John Doe": {"display_name": "John Doe", "unique_name": "john.doe@company.com", "id": ""}}'
-                    >{{ runtime_settings.reviewer_overrides_text }}</textarea>
-                </label>
-                {% if runtime_settings.reviewer_overrides_error %}
-                <p class="hint error">The current overrides JSON could not be parsed: {{ runtime_settings.reviewer_overrides_error }}</p>
-                {% endif %}
-            </section>
+            </div>
 
-            <section class="settings-group" id="agent-settings">
-                <div class="settings-group-header">
-                    <h3>CM GPT Integration</h3>
-                    <p>These values control the approved automatic executor that applies documentation changes on the work branch.</p>
-                </div>
-                <div class="settings-grid">
-                    <label>
-                        <span>WSL Distro</span>
-                        <input type="text" name="copilot_wsl_distro" value="{{ runtime_settings.copilot_wsl_distro }}" placeholder="Ubuntu">
-                    </label>
-                    <label>
-                        <span>Agent Provider</span>
-                        <select name="copilot_provider">
-                            {% for option in copilot_provider_options %}
-                            <option value="{{ option }}" {% if option == runtime_settings.copilot_provider %}selected{% endif %}>
-                                {% if option == "m365_desktop" %}Microsoft 365 Copilot Desktop (not automation-capable){% elif option == "codex_cli" %}Codex CLI{% elif option == "claude_cli" %}Claude CLI{% elif option == "custom_cli" %}Custom CLI{% else %}VS Code Copilot{% endif %}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label>
-                        <span>Model Name</span>
-                        <input
-                            type="text"
-                            name="copilot_model_name"
-                            value="{{ runtime_settings.copilot_model_name }}"
-                            placeholder="CM GPT"
-                            list="copilot-model-options"
-                        >
-                        <datalist id="copilot-model-options">
-                            <option value="CM GPT"></option>
-                            <option value="Auto"></option>
-                            <option value="Claude Haiku 4.5"></option>
-                            <option value="GPT-4.1"></option>
-                            <option value="GPT-4o"></option>
-                            <option value="GPT-5 mini"></option>
-                            <option value="Raptor mini (Preview)"></option>
-                        </datalist>
-                    </label>
-                    <label>
-                        <span>Agent Name</span>
-                        <input type="text" name="copilot_agent_name" value="{{ runtime_settings.copilot_agent_name }}" placeholder="CM GPT">
-                    </label>
-                    <label class="checkbox-field">
-                        <span>Run Executor Automatically</span>
-                        <input type="checkbox" name="copilot_auto_launch" value="true" {% if runtime_settings.copilot_auto_launch %}checked{% endif %}>
-                    </label>
-                    <label class="checkbox-field">
-                        <span>Strict CM GPT Safety Mode</span>
-                        <input type="checkbox" name="copilot_strict_model_safety" value="true" {% if runtime_settings.copilot_strict_model_safety %}checked{% endif %}>
-                    </label>
-                    <label class="checkbox-field">
-                        <span>Open Workspace In WSL Remote</span>
-                        <input type="checkbox" name="copilot_open_wsl_remote" value="true" {% if runtime_settings.copilot_open_wsl_remote %}checked{% endif %}>
-                    </label>
-                    <label>
-                        <span>VS Code Window Mode</span>
-                        <select name="copilot_vscode_window_mode">
-                            {% for option in copilot_vscode_window_mode_options %}
-                            <option value="{{ option }}" {% if option == runtime_settings.copilot_vscode_window_mode %}selected{% endif %}>{{ "Reuse active window" if option == "reuse" else "Open new window" }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="full-width">
-                        <span>Microsoft 365 Copilot URL</span>
-                        <input type="text" name="copilot_desktop_url" value="{{ runtime_settings.copilot_desktop_url }}" placeholder="https://m365.cloud.microsoft/chat">
-                    </label>
-                    <label class="full-width">
-                        <span>Reference Documentation Workspace Path</span>
-                        <input type="text" name="copilot_reference_docs_path" value="{{ runtime_settings.copilot_reference_docs_path }}" placeholder="/workspaces/Documentation">
-                    </label>
-                    <label class="full-width">
-                        <span>Final Reports Path</span>
-                        <input type="text" name="final_reports_path" value="{{ runtime_settings.final_reports_path }}" placeholder="data/reports">
-                    </label>
-                    <label class="full-width">
-                        <span>Initial Agent Prompt Template</span>
-                        <textarea
-                            name="copilot_prompt_template"
-                            rows="8"
-                            placeholder="Use {{ '{{context_path}}' }}, {{ '{{agent_result_path}}' }}, {{ '{{workspace_path}}' }}, {{ '{{branch_name}}' }}, {{ '{{model_name}}' }}, or {{ '{{provider}}' }} as placeholders."
-                        >{{ runtime_settings.copilot_prompt_template }}</textarea>
-                    </label>
-                    <label class="full-width">
-                        <span>CLI Command Template</span>
-                        <textarea
-                            name="copilot_cli_command_template"
-                            rows="4"
-                            placeholder="Required for Codex, Claude, or Custom CLI providers. Example: your-command --prompt {{ '{{prompt_path}}' }}. Use {{ '{{workspace_unc_path}}' }} for Windows executors."
-                        >{{ runtime_settings.copilot_cli_command_template }}</textarea>
-                    </label>
-                </div>
-                <p class="hint">VS Code Copilot is the current automatic executor. Codex, Claude, and Custom CLI providers run the configured command template in WSL and must write the expected <code>agent-result.json</code>. Microsoft 365 Copilot Desktop is listed for visibility, but the pipeline blocks it until an approved automation connector is available.</p>
-            </section>
+            <div class="settings-stack">
+                <section class="settings-group" id="runner-settings">
+                    <div class="settings-group-header">
+                        <h3>Automation Runner</h3>
+                        <p>The runner reconciles persisted work-item state in the background and can optionally keep discovering new current-iteration tasks.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label class="checkbox-field">
+                            <span>Enable Background Runner</span>
+                            <input type="checkbox" name="automation_runner_enabled" value="true" {% if runtime_settings.automation_runner_enabled %}checked{% endif %}>
+                        </label>
+                        <label>
+                            <span>Reconcile Interval (seconds)</span>
+                            <input type="number" name="automation_reconcile_interval_seconds" min="5" max="3600" value="{{ runtime_settings.automation_reconcile_interval_seconds }}">
+                        </label>
+                        <label class="checkbox-field">
+                            <span>Continuous Mode</span>
+                            <input type="checkbox" name="automation_continuous_mode" value="true" {% if runtime_settings.automation_continuous_mode %}checked{% endif %}>
+                        </label>
+                        <label>
+                            <span>Discovery Interval (minutes)</span>
+                            <input type="number" name="automation_discovery_interval_minutes" min="1" max="1440" value="{{ runtime_settings.automation_discovery_interval_minutes }}">
+                        </label>
+                    </div>
+                    <p class="hint">Continuous mode only starts automation for open current-iteration tasks when the iteration can be resolved. Existing in-progress flows are resumed regardless of whether continuous discovery is enabled.</p>
+                    <p class="hint">Embedded runner status: <code>{{ "running" if automation_runner.running else "stopped" }}</code>{% if automation_runner.last_reconcile_at %}; last reconcile: <code>{{ automation_runner.last_reconcile_at }}</code>{% endif %}</p>
+                    <div class="actions">
+                        <button type="submit" formaction="/automation/run-cycle" formmethod="post">Run Automation Cycle Now</button>
+                    </div>
+                </section>
 
-            <section class="settings-group" id="vscode-settings">
-                <div class="settings-group-header">
-                    <h3>VS Code Copilot Permissions</h3>
-                    <p>Use these settings to preconfigure the local VS Code chat session with a higher permission level and read access to external reference folders such as the shared Documentation repository.</p>
-                </div>
-                <div class="settings-grid">
-                    <label class="checkbox-field">
-                        <span>Apply These Settings To Local VS Code</span>
-                        <input type="checkbox" name="copilot_vscode_apply_settings" value="true" {% if runtime_settings.copilot_vscode_apply_settings %}checked{% endif %}>
-                    </label>
-                    <label>
-                        <span>Default Permission Level</span>
-                        <select name="copilot_vscode_permission_level">
-                            {% for option in copilot_permission_level_options %}
-                            <option value="{{ option }}" {% if option == runtime_settings.copilot_vscode_permission_level %}selected{% endif %}>{{ option }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="checkbox-field">
-                        <span>Enable Global Tool Auto-Approve</span>
-                        <input type="checkbox" name="copilot_vscode_global_auto_approve" value="true" {% if runtime_settings.copilot_vscode_global_auto_approve %}checked{% endif %}>
-                    </label>
-                    <label>
-                        <span>Auto-Accept Edit Delay (ms)</span>
-                        <input type="number" name="copilot_vscode_auto_accept_edits_delay_ms" min="0" max="60000" value="{{ runtime_settings.copilot_vscode_auto_accept_edits_delay_ms }}">
-                    </label>
-                    <label class="full-width">
-                        <span>VS Code User Settings Path</span>
-                        <input type="text" name="copilot_vscode_settings_path" value="{{ runtime_settings.copilot_vscode_settings_path }}" placeholder="C:\Users\name\AppData\Roaming\Code\User\settings.json">
-                    </label>
-                </div>
-                <label class="full-width">
-                    <span>Additional Read-Access Folders</span>
-                    <textarea
-                        name="copilot_additional_read_access_folders_text"
-                        rows="6"
-                        placeholder="One folder per line. WSL paths, UNC paths, and Windows paths are supported."
-                    >{{ runtime_settings.copilot_additional_read_access_folders_text }}</textarea>
-                </label>
-                {% if runtime_settings.copilot_additional_read_access_folders_error %}
-                <p class="hint error">The current additional read-access folder list could not be parsed: {{ runtime_settings.copilot_additional_read_access_folders_error }}</p>
-                {% endif %}
-                <p class="hint">Effective VS Code settings path: <code>{{ runtime_settings.copilot_vscode_effective_settings_path }}</code></p>
-                <p class="hint">Derived read-access folders that will be written to VS Code: <code>{{ runtime_settings.copilot_vscode_derived_read_access_folders|join(", ") if runtime_settings.copilot_vscode_derived_read_access_folders else "None" }}</code></p>
-            </section>
+                <section class="settings-group" id="server-settings">
+                    <div class="settings-group-header">
+                        <h3>Local Server</h3>
+                        <p>These values only affect the local dashboard process.</p>
+                    </div>
+                    <div class="settings-grid">
+                        <label>
+                            <span>Server Host</span>
+                            <input type="text" name="server_host" value="{{ runtime_settings.server_host }}">
+                        </label>
+                        <label>
+                            <span>Preferred Port</span>
+                            <input type="number" name="server_port" min="1" max="65535" value="{{ runtime_settings.server_port }}">
+                        </label>
+                        <label class="checkbox-field">
+                            <span>Automatic Port Fallback</span>
+                            <input type="checkbox" name="auto_port" value="true" {% if runtime_settings.auto_port %}checked{% endif %}>
+                        </label>
+                        <label>
+                            <span>TFS Request Timeout (seconds)</span>
+                            <input type="number" name="tfs_request_timeout_seconds" min="5" max="120" value="{{ runtime_settings.tfs_request_timeout_seconds }}">
+                        </label>
+                    </div>
+                </section>
+            </div>
 
-            <section class="settings-group" id="runner-settings">
-                <div class="settings-group-header">
-                    <h3>Automation Runner</h3>
-                    <p>The runner reconciles persisted work-item state in the background and can optionally keep discovering new current-iteration tasks.</p>
-                </div>
-                <div class="settings-grid">
-                    <label class="checkbox-field">
-                        <span>Enable Background Runner</span>
-                        <input type="checkbox" name="automation_runner_enabled" value="true" {% if runtime_settings.automation_runner_enabled %}checked{% endif %}>
-                    </label>
-                    <label>
-                        <span>Reconcile Interval (seconds)</span>
-                        <input type="number" name="automation_reconcile_interval_seconds" min="5" max="3600" value="{{ runtime_settings.automation_reconcile_interval_seconds }}">
-                    </label>
-                    <label class="checkbox-field">
-                        <span>Continuous Mode</span>
-                        <input type="checkbox" name="automation_continuous_mode" value="true" {% if runtime_settings.automation_continuous_mode %}checked{% endif %}>
-                    </label>
-                    <label>
-                        <span>Discovery Interval (minutes)</span>
-                        <input type="number" name="automation_discovery_interval_minutes" min="1" max="1440" value="{{ runtime_settings.automation_discovery_interval_minutes }}">
-                    </label>
-                </div>
-                <p class="hint">Continuous mode only starts automation for open current-iteration tasks when the iteration can be resolved. Existing in-progress flows are resumed regardless of whether continuous discovery is enabled.</p>
-                <p class="hint">Embedded runner status: <code>{{ "running" if automation_runner.running else "stopped" }}</code>{% if automation_runner.last_reconcile_at %}; last reconcile: <code>{{ automation_runner.last_reconcile_at }}</code>{% endif %}</p>
-                <div class="actions">
-                    <button type="submit" formaction="/automation/run-cycle" formmethod="post">Run Automation Cycle Now</button>
-                </div>
-            </section>
-
-            <section class="settings-group" id="server-settings">
-                <div class="settings-group-header">
-                    <h3>Local Server</h3>
-                    <p>These values only affect the local dashboard process.</p>
-                </div>
-                <div class="settings-grid">
-                    <label>
-                        <span>Server Host</span>
-                        <input type="text" name="server_host" value="{{ runtime_settings.server_host }}">
-                    </label>
-                    <label>
-                        <span>Preferred Port</span>
-                        <input type="number" name="server_port" min="1" max="65535" value="{{ runtime_settings.server_port }}">
-                    </label>
-                    <label class="checkbox-field">
-                        <span>Automatic Port Fallback</span>
-                        <input type="checkbox" name="auto_port" value="true" {% if runtime_settings.auto_port %}checked{% endif %}>
-                    </label>
-                </div>
-            </section>
-        </div>
-        <div class="actions">
-            <button type="submit">Save Automation Settings</button>
+            <div class="actions">
+                <button type="submit">Save Runtime Settings</button>
+            </div>
         </div>
     </form>
 </section>
