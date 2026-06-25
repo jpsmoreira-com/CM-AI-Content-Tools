@@ -18,6 +18,7 @@ COPILOT_PERMISSION_LEVEL_OPTIONS = ["default", "autoApprove", "autopilot"]
 COPILOT_PROVIDER_OPTIONS = ["vscode", "codex_cli", "claude_cli", "custom_cli", "m365_desktop"]
 COPILOT_VSCODE_WINDOW_MODE_OPTIONS = ["reuse", "new"]
 CONTEXT_CAPTURE_ROOT_MODE_OPTIONS = ["parent", "task"]
+EXECUTION_RUNTIME_OPTIONS = ["devcontainer", "windows_host"]
 DEFAULT_AGENT_PROMPT_TEMPLATE = """Read `{{context_path}}`, the adjacent HTML/JSON files, and the generated capture package when present.
 Start with `capture/INSTRUCTIONS.md` and `capture/summary.md` before inspecting repository files.
 Inspect referenced specs, linked pull request diffs, and reference documentation when available.
@@ -56,6 +57,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "automation_discovery_interval_minutes": 5,
     "content_team_members": [],
     "default_current_iteration_only": True,
+    "execution_runtime": "devcontainer",
     "copilot_wsl_distro": "Ubuntu",
     "copilot_provider": "vscode",
     "copilot_model_name": "CM GPT",
@@ -309,6 +311,7 @@ def save_env_values(values: Dict[str, str], path: Path = ENV_PATH) -> None:
         "DOC_AUTOMATION_DISCOVERY_INTERVAL_MINUTES",
         "DOC_AUTOMATION_CONTENT_TEAM_MEMBERS_JSON",
         "DOC_AUTOMATION_DEFAULT_CURRENT_ITERATION_ONLY",
+        "DOC_AUTOMATION_EXECUTION_RUNTIME",
         "DOC_AUTOMATION_COPILOT_WSL_DISTRO",
         "DOC_AUTOMATION_COPILOT_PROVIDER",
         "DOC_AUTOMATION_COPILOT_MODEL_NAME",
@@ -463,6 +466,12 @@ def load_runtime_settings() -> Dict[str, Any]:
     copilot_provider = str(raw.get("DOC_AUTOMATION_COPILOT_PROVIDER") or DEFAULT_RUNTIME_SETTINGS["copilot_provider"]).strip()
     if copilot_provider not in COPILOT_PROVIDER_OPTIONS:
         copilot_provider = DEFAULT_RUNTIME_SETTINGS["copilot_provider"]
+    execution_runtime = str(
+        raw.get("DOC_AUTOMATION_EXECUTION_RUNTIME")
+        or DEFAULT_RUNTIME_SETTINGS["execution_runtime"]
+    ).strip()
+    if execution_runtime not in EXECUTION_RUNTIME_OPTIONS:
+        execution_runtime = DEFAULT_RUNTIME_SETTINGS["execution_runtime"]
     copilot_vscode_window_mode = str(
         raw.get("DOC_AUTOMATION_COPILOT_VSCODE_WINDOW_MODE")
         or DEFAULT_RUNTIME_SETTINGS["copilot_vscode_window_mode"]
@@ -512,6 +521,7 @@ def load_runtime_settings() -> Dict[str, Any]:
             raw.get("DOC_AUTOMATION_DEFAULT_CURRENT_ITERATION_ONLY"),
             DEFAULT_RUNTIME_SETTINGS["default_current_iteration_only"],
         ),
+        "execution_runtime": execution_runtime,
         "copilot_wsl_distro": str(
             raw.get("DOC_AUTOMATION_COPILOT_WSL_DISTRO") or DEFAULT_RUNTIME_SETTINGS["copilot_wsl_distro"]
         ).strip(),
@@ -622,6 +632,7 @@ def save_runtime_settings(
     automation_discovery_interval_minutes: int,
     content_team_members_text: str,
     default_current_iteration_only: bool,
+    execution_runtime: str,
     copilot_wsl_distro: str,
     copilot_provider: str,
     copilot_model_name: str,
@@ -665,6 +676,8 @@ def save_runtime_settings(
         raise ValueError("Invalid VS Code Copilot permission level.")
     if str(copilot_provider or "").strip() not in COPILOT_PROVIDER_OPTIONS:
         raise ValueError("Invalid Copilot provider.")
+    if str(execution_runtime or "").strip() not in EXECUTION_RUNTIME_OPTIONS:
+        raise ValueError("Invalid execution runtime.")
     if str(copilot_vscode_window_mode or "").strip() not in COPILOT_VSCODE_WINDOW_MODE_OPTIONS:
         raise ValueError("Invalid VS Code window mode.")
     if copilot_vscode_auto_accept_edits_delay_ms < 0 or copilot_vscode_auto_accept_edits_delay_ms > 60000:
@@ -696,6 +709,7 @@ def save_runtime_settings(
         "DOC_AUTOMATION_DISCOVERY_INTERVAL_MINUTES": str(automation_discovery_interval_minutes),
         "DOC_AUTOMATION_CONTENT_TEAM_MEMBERS_JSON": json.dumps(content_team_members, ensure_ascii=False),
         "DOC_AUTOMATION_DEFAULT_CURRENT_ITERATION_ONLY": "true" if default_current_iteration_only else "false",
+        "DOC_AUTOMATION_EXECUTION_RUNTIME": execution_runtime.strip(),
         "DOC_AUTOMATION_COPILOT_WSL_DISTRO": copilot_wsl_distro.strip(),
         "DOC_AUTOMATION_COPILOT_PROVIDER": copilot_provider.strip(),
         "DOC_AUTOMATION_COPILOT_MODEL_NAME": copilot_model_name.strip(),

@@ -128,7 +128,7 @@ For CLI providers such as Codex, Claude, or a custom command:
 - select the provider in `Settings`;
 - configure the `CLI Command Template`;
 - use placeholders such as `{{prompt_path}}`, `{{workspace_path}}`, `{{workspace_unc_path}}`, `{{branch_name}}`, `{{model_name}}`, and `{{agent_result_path}}`;
-- the command is launched in WSL and must write the expected `agent-result.json`.
+- the command is launched through the configured execution runtime and must write the expected `agent-result.json`.
 - for WSL repositories, prefer a native WSL CLI executable and `{{workspace_path}}`; using a Windows CLI against `{{workspace_unc_path}}` can fail when the agent process resolves the working directory.
 - for Codex CLI test runs, the local MVP uses the WSL user `CODEX_HOME` plus the native WSL npm install, so auth and state files stay inside Linux while the repository path remains `/workspaces/...`.
 
@@ -183,6 +183,7 @@ After a provider handoff is prepared, the work item detail panel exposes `View C
 Before using the CM GPT action, configure these values in `Settings`:
 
 - portal `CM GPT Workspace Path In WSL`;
+- runtime `Execution Runtime`, left as `Devcontainer / native Linux` for the default one-click setup or changed to `Windows host via WSL` when the dashboard process runs on Windows and must call `wsl.exe`;
 - runtime `WSL Distro`;
 - runtime `Copilot Provider`, set to `VS Code Copilot` for automatic execution;
 - runtime `Initial Agent Prompt Template`, used to generate each work item prompt;

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import os
 import re
@@ -22,6 +24,13 @@ DOCX_RE = re.compile(r"\b[^\\/\s<>:\"|?*]+\.(?:docx|docm|doc)\b", re.IGNORECASE)
 IMG_SRC_RE = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
 CUSTOM_AGENT_FILE_BASENAME = "cmf-tfs-doc-automation"
 WORKSPACE_CONTEXT_ROOT = ".automation-context/copilot"
+EXECUTION_RUNTIME_DEVCONTAINER = "devcontainer"
+EXECUTION_RUNTIME_WINDOWS_HOST = "windows_host"
+EXECUTION_RUNTIME_OPTIONS = {EXECUTION_RUNTIME_DEVCONTAINER, EXECUTION_RUNTIME_WINDOWS_HOST}
+_EXECUTION_RUNTIME: ContextVar[str] = ContextVar(
+    "doc_automation_execution_runtime",
+    default=EXECUTION_RUNTIME_DEVCONTAINER,
+)
 
 
 def _yaml_string(value: str) -> str:
@@ -38,6 +47,26 @@ def _shell_quote(value: str) -> str:
     return shlex.quote(str(value or ""))
 
 
+def normalize_execution_runtime(value: str) -> str:
+    token = str(value or "").strip()
+    if token in EXECUTION_RUNTIME_OPTIONS:
+        return token
+    return EXECUTION_RUNTIME_DEVCONTAINER
+
+
+def current_execution_runtime() -> str:
+    return normalize_execution_runtime(_EXECUTION_RUNTIME.get())
+
+
+@contextmanager
+def execution_runtime_scope(value: str):
+    token = _EXECUTION_RUNTIME.set(normalize_execution_runtime(value))
+    try:
+        yield
+    finally:
+        _EXECUTION_RUNTIME.reset(token)
+
+
 def _run_wsl_script(
     distro: str,
     script: str,
@@ -45,33 +74,52 @@ def _run_wsl_script(
     input_text: str | None = None,
     timeout_seconds: int = 240,
 ) -> subprocess.CompletedProcess[str]:
-    command = ["wsl.exe"]
-    if str(distro or "").strip():
-        command.extend(["-d", str(distro).strip()])
-    command.extend(["--", "bash", "-lc", str(script or "")])
-    if input_text is not None:
-        binary_result = subprocess.run(
+    execution_runtime = current_execution_runtime()
+    if execution_runtime == EXECUTION_RUNTIME_WINDOWS_HOST:
+        command = ["wsl.exe"]
+        if str(distro or "").strip():
+            command.extend(["-d", str(distro).strip()])
+        command.extend(["--", "bash", "-lc", str(script or "")])
+    else:
+        if os.name == "nt":
+            raise CopilotIntegrationError(
+                "Execution runtime is set to devcontainer, but the dashboard process is running on Windows. "
+                "Run the dashboard inside the devcontainer or switch Execution Runtime to Windows host via WSL."
+            )
+        command = ["bash", "-lc", str(script or "")]
+    try:
+        if input_text is not None:
+            binary_result = subprocess.run(
+                command,
+                input=input_text.encode("utf-8"),
+                capture_output=True,
+                text=False,
+                timeout=timeout_seconds,
+            )
+            return subprocess.CompletedProcess(
+                args=binary_result.args,
+                returncode=binary_result.returncode,
+                stdout=binary_result.stdout.decode("utf-8", errors="replace"),
+                stderr=binary_result.stderr.decode("utf-8", errors="replace"),
+            )
+        return subprocess.run(
             command,
-            input=input_text.encode("utf-8"),
+            input=input_text,
             capture_output=True,
-            text=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
         )
-        return subprocess.CompletedProcess(
-            args=binary_result.args,
-            returncode=binary_result.returncode,
-            stdout=binary_result.stdout.decode("utf-8", errors="replace"),
-            stderr=binary_result.stderr.decode("utf-8", errors="replace"),
-        )
-    return subprocess.run(
-        command,
-        input=input_text,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout_seconds,
-    )
+    except FileNotFoundError as exc:
+        if execution_runtime == EXECUTION_RUNTIME_WINDOWS_HOST:
+            raise CopilotIntegrationError(
+                "Execution runtime is set to Windows host via WSL, but `wsl.exe` is not available from this process. "
+                "Run the dashboard on Windows or switch Execution Runtime to Devcontainer / native Linux."
+            ) from exc
+        raise CopilotIntegrationError(
+            "Execution runtime is set to devcontainer, but `bash` is not available from this process."
+        ) from exc
 
 
 def read_wsl_text_file(distro: str, file_path: str, *, max_chars: int = 200000) -> str:

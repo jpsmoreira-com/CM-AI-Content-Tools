@@ -24,6 +24,8 @@ API_COMMENTS = "6.0-preview.3"
 API_THREADS = "5.0"
 CHILD_RELATION_TYPES = {"System.LinkTypes.Hierarchy-Forward", "Hierarchy-Forward"}
 COMMIT_RE = re.compile(r"Git/Commit/([^/%]+)(?:%2[fF]|/)([^/%]+)(?:%2[fF]|/)([0-9a-f]+)", re.IGNORECASE)
+EXECUTION_RUNTIME_DEVCONTAINER = "devcontainer"
+EXECUTION_RUNTIME_WINDOWS_HOST = "windows_host"
 
 
 class _HTMLText(html.parser.HTMLParser):
@@ -266,9 +268,20 @@ def run_command(command: List[str], *, timeout_seconds: int = 120) -> subprocess
     )
 
 
-def run_git(path: str, args: List[str], *, distro: str = "", timeout_seconds: int = 120) -> subprocess.CompletedProcess[str]:
+def should_use_wsl_bridge(execution_runtime: str) -> bool:
+    return str(execution_runtime or "").strip() == EXECUTION_RUNTIME_WINDOWS_HOST
+
+
+def run_git(
+    path: str,
+    args: List[str],
+    *,
+    distro: str = "",
+    execution_runtime: str = EXECUTION_RUNTIME_DEVCONTAINER,
+    timeout_seconds: int = 120,
+) -> subprocess.CompletedProcess[str]:
     clean_path = str(path or "").strip()
-    if os.name == "nt" and clean_path.startswith("/"):
+    if should_use_wsl_bridge(execution_runtime) and clean_path.startswith("/"):
         command = ["wsl.exe"]
         if str(distro or "").strip():
             command.extend(["-d", str(distro).strip()])
@@ -277,7 +290,14 @@ def run_git(path: str, args: List[str], *, distro: str = "", timeout_seconds: in
     return run_command(["git", "-C", clean_path, *args], timeout_seconds=timeout_seconds)
 
 
-def list_candidate_repo_paths(repo_name: str, *, workspace_path: str, scan_roots: List[str], distro: str) -> List[str]:
+def list_candidate_repo_paths(
+    repo_name: str,
+    *,
+    workspace_path: str,
+    scan_roots: List[str],
+    distro: str,
+    execution_runtime: str = EXECUTION_RUNTIME_DEVCONTAINER,
+) -> List[str]:
     candidates: List[str] = []
     for candidate in [workspace_path, f"/workspaces/{repo_name}"]:
         value = str(candidate or "").strip()
@@ -288,7 +308,7 @@ def list_candidate_repo_paths(repo_name: str, *, workspace_path: str, scan_roots
         clean_root = str(root or "").strip().rstrip("/")
         if not clean_root:
             continue
-        if os.name == "nt" and clean_root.startswith("/"):
+        if should_use_wsl_bridge(execution_runtime) and clean_root.startswith("/"):
             script = f"find {shlex.quote(clean_root)} -maxdepth 1 -type d -name {shlex.quote(repo_name + '*')} -print 2>/dev/null"
             command = ["wsl.exe"]
             if str(distro or "").strip():
@@ -310,36 +330,99 @@ def list_candidate_repo_paths(repo_name: str, *, workspace_path: str, scan_roots
     return candidates
 
 
-def repo_matches(path: str, repo_name: str, *, distro: str) -> bool:
-    result = run_git(path, ["remote", "get-url", "origin"], distro=distro, timeout_seconds=30)
+def repo_matches(
+    path: str,
+    repo_name: str,
+    *,
+    distro: str,
+    execution_runtime: str = EXECUTION_RUNTIME_DEVCONTAINER,
+) -> bool:
+    result = run_git(
+        path,
+        ["remote", "get-url", "origin"],
+        distro=distro,
+        execution_runtime=execution_runtime,
+        timeout_seconds=30,
+    )
     if result.returncode != 0:
         return False
     origin = result.stdout.strip().replace("\\", "/").rstrip("/")
     return origin.lower().endswith(f"/_git/{repo_name}".lower())
 
 
-def find_local_repo(repo_name: str, *, workspace_path: str, scan_roots: List[str], distro: str) -> Optional[str]:
-    for path in list_candidate_repo_paths(repo_name, workspace_path=workspace_path, scan_roots=scan_roots, distro=distro):
-        if repo_matches(path, repo_name, distro=distro):
+def find_local_repo(
+    repo_name: str,
+    *,
+    workspace_path: str,
+    scan_roots: List[str],
+    distro: str,
+    execution_runtime: str = EXECUTION_RUNTIME_DEVCONTAINER,
+) -> Optional[str]:
+    for path in list_candidate_repo_paths(
+        repo_name,
+        workspace_path=workspace_path,
+        scan_roots=scan_roots,
+        distro=distro,
+        execution_runtime=execution_runtime,
+    ):
+        if repo_matches(path, repo_name, distro=distro, execution_runtime=execution_runtime):
             return path
     return None
 
 
-def capture_git_diff(repo_name: str, commit: str, *, workspace_path: str, scan_roots: List[str], distro: str) -> tuple[str, str]:
+def capture_git_diff(
+    repo_name: str,
+    commit: str,
+    *,
+    workspace_path: str,
+    scan_roots: List[str],
+    distro: str,
+    execution_runtime: str = EXECUTION_RUNTIME_DEVCONTAINER,
+) -> tuple[str, str]:
     if not commit:
         return "", "no merge commit was available"
-    repo_path = find_local_repo(repo_name, workspace_path=workspace_path, scan_roots=scan_roots, distro=distro)
+    repo_path = find_local_repo(
+        repo_name,
+        workspace_path=workspace_path,
+        scan_roots=scan_roots,
+        distro=distro,
+        execution_runtime=execution_runtime,
+    )
     if not repo_path:
         return "", f"no local clone was found for repository {repo_name}"
 
-    have = run_git(repo_path, ["cat-file", "-t", commit], distro=distro, timeout_seconds=60)
+    have = run_git(
+        repo_path,
+        ["cat-file", "-t", commit],
+        distro=distro,
+        execution_runtime=execution_runtime,
+        timeout_seconds=60,
+    )
     if have.returncode != 0:
-        run_git(repo_path, ["fetch", "origin", commit], distro=distro, timeout_seconds=180)
-        have = run_git(repo_path, ["cat-file", "-t", commit], distro=distro, timeout_seconds=60)
+        run_git(
+            repo_path,
+            ["fetch", "origin", commit],
+            distro=distro,
+            execution_runtime=execution_runtime,
+            timeout_seconds=180,
+        )
+        have = run_git(
+            repo_path,
+            ["cat-file", "-t", commit],
+            distro=distro,
+            execution_runtime=execution_runtime,
+            timeout_seconds=60,
+        )
     if have.returncode != 0:
         return "", f"commit {commit[:12]} was not found in local clone {repo_path}"
 
-    show = run_git(repo_path, ["show", "--format=medium", "--no-color", commit], distro=distro, timeout_seconds=180)
+    show = run_git(
+        repo_path,
+        ["show", "--format=medium", "--no-color", commit],
+        distro=distro,
+        execution_runtime=execution_runtime,
+        timeout_seconds=180,
+    )
     if show.returncode != 0:
         return "", show.stderr.strip() or show.stdout.strip() or f"failed to capture diff from {repo_path}"
     return show.stdout, repo_path
@@ -410,6 +493,7 @@ def render_pr_files(
     workspace_path: str,
     scan_roots: List[str],
     distro: str,
+    execution_runtime: str,
     include_diff: bool,
     errors: List[str],
 ) -> tuple[Dict[str, str], Dict[str, Any]]:
@@ -468,6 +552,7 @@ def render_pr_files(
             workspace_path=workspace_path,
             scan_roots=scan_roots,
             distro=distro,
+            execution_runtime=execution_runtime,
         )
     if not diff_text:
         diff_text = f"# diff unavailable: {diff_source or 'diff capture disabled'}\n"
@@ -690,6 +775,7 @@ def build_context_capture_package(
     include_pr_diffs: bool = True,
     max_tree_items: int = 50,
     workspace_scan_roots: Optional[List[str]] = None,
+    execution_runtime: str = EXECUTION_RUNTIME_DEVCONTAINER,
 ) -> Dict[str, str]:
     use_parent = str(root_mode or "parent").strip().lower() == "parent"
     root_id = int((item.get("parent_id") if use_parent else None) or item.get("id") or 0)
@@ -718,6 +804,7 @@ def build_context_capture_package(
             workspace_path=workspace_path,
             scan_roots=scan_roots,
             distro=distro,
+            execution_runtime=execution_runtime,
             include_diff=include_pr_diffs,
             errors=errors,
         )

@@ -32,7 +32,7 @@
             <div>
                 <span class="metric-label">Agent Provider</span>
                 <strong>{{ runtime_settings.copilot_provider }}</strong>
-                <span class="muted">{{ runtime_settings.copilot_model_name or "No model configured" }}</span>
+                <span class="muted">{{ runtime_settings.copilot_model_name or "No model configured" }} / {{ runtime_settings.execution_runtime }}</span>
             </div>
             <div>
                 <span class="metric-label">Runner</span>
@@ -320,6 +320,16 @@
                         <p>These values control the approved automatic executor that applies changes on the work branch.</p>
                     </div>
                     <div class="settings-grid">
+                        <label>
+                            <span>Execution Runtime</span>
+                            <select name="execution_runtime">
+                                {% for option in execution_runtime_options %}
+                                <option value="{{ option }}" {% if option == runtime_settings.execution_runtime %}selected{% endif %}>
+                                    {% if option == "windows_host" %}Windows host via WSL{% else %}Devcontainer / native Linux{% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </label>
                         <label>
                             <span>WSL Distro</span>
                             <input type="text" name="copilot_wsl_distro" value="{{ runtime_settings.copilot_wsl_distro }}" placeholder="Ubuntu">

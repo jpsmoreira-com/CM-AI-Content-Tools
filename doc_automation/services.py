@@ -23,6 +23,7 @@ from .copilot import (
     CopilotIntegrationError,
     commit_and_push_agent_changes,
     discover_workspace_instruction_files,
+    execution_runtime_scope,
     get_vscode_user_data_agent_directory,
     get_windows_user_agent_directory,
     inspect_agent_result_file,
@@ -41,6 +42,7 @@ from .config import (
     COPILOT_PROVIDER_OPTIONS,
     COPILOT_VSCODE_WINDOW_MODE_OPTIONS,
     DATA_DIR,
+    EXECUTION_RUNTIME_OPTIONS,
     get_portal_config,
     get_portal_names,
     load_app_config,
@@ -1037,6 +1039,7 @@ class AutomationService:
             "copilot_provider_options": COPILOT_PROVIDER_OPTIONS,
             "copilot_vscode_window_mode_options": COPILOT_VSCODE_WINDOW_MODE_OPTIONS,
             "context_capture_root_mode_options": CONTEXT_CAPTURE_ROOT_MODE_OPTIONS,
+            "execution_runtime_options": EXECUTION_RUNTIME_OPTIONS,
         }
 
     def _derive_vscode_read_access_folders(
@@ -1961,14 +1964,17 @@ class AutomationService:
         selected_definition = capture_files[selected_key]
 
         default_distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip() or "Ubuntu"
-        context_distro, normalized_context_path = normalize_wsl_target_path(raw_context_path, default_distro)
+        execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+        with execution_runtime_scope(execution_runtime):
+            context_distro, normalized_context_path = normalize_wsl_target_path(raw_context_path, default_distro)
         if not normalized_context_path:
             raise ServiceError(f"The saved context path is not valid for WI {work_item_id}.")
         context_directory = normalized_context_path.rsplit("/", 1)[0]
         capture_directory = f"{context_directory}/capture"
         capture_path = f"{capture_directory}/{selected_definition['filename']}"
         try:
-            content = read_wsl_text_file(context_distro, capture_path, max_chars=300000)
+            with execution_runtime_scope(execution_runtime):
+                content = read_wsl_text_file(context_distro, capture_path, max_chars=300000)
         except CopilotIntegrationError as exc:
             raise ServiceError(str(exc)) from exc
 
@@ -2162,6 +2168,7 @@ class AutomationService:
         automation_discovery_interval_minutes: int,
         content_team_members_text: str,
         default_current_iteration_only: bool,
+        execution_runtime: str,
         copilot_wsl_distro: str,
         copilot_provider: str,
         copilot_model_name: str,
@@ -2203,6 +2210,7 @@ class AutomationService:
                 automation_discovery_interval_minutes=automation_discovery_interval_minutes,
                 content_team_members_text=content_team_members_text,
                 default_current_iteration_only=default_current_iteration_only,
+                execution_runtime=execution_runtime,
                 copilot_wsl_distro=copilot_wsl_distro,
                 copilot_provider=copilot_provider,
                 copilot_model_name=copilot_model_name,
@@ -2381,6 +2389,7 @@ class AutomationService:
         _, items_by_id = self._load_action_items(portal_name, ordered_ids)
         runtime_settings = load_runtime_settings()
         runtime_provider = str(runtime_settings.get("copilot_provider") or "").strip()
+        execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
         provider_requires_process = runtime_provider in {"codex_cli", "claude_cli", "custom_cli"}
         results: List[Dict[str, Any]] = []
 
@@ -2495,10 +2504,11 @@ class AutomationService:
                 if provider_requires_process and waiting_for_existing_provider and not str(item.get("copilot_process_id") or "").strip():
                     waiting_for_existing_provider = False
                 if runtime_provider == "vscode" and waiting_for_existing_provider:
-                    result_file = inspect_agent_result_file(
-                        str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
-                        str(item.get("agent_result_path") or ""),
-                    )
+                    with execution_runtime_scope(execution_runtime):
+                        result_file = inspect_agent_result_file(
+                            str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
+                            str(item.get("agent_result_path") or ""),
+                        )
                     launch_age_seconds = _age_seconds_from_iso_timestamp(item.get("copilot_prepared_at"))
                     if (
                         not bool(result_file.get("exists"))
@@ -2507,10 +2517,11 @@ class AutomationService:
                         waiting_for_existing_provider = False
                 failed_cli_provider_without_result = False
                 if provider_requires_process and agent_result_status == "error" and bool(item.get("agent_result_path")):
-                    result_file = inspect_agent_result_file(
-                        str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
-                        str(item.get("agent_result_path") or ""),
-                    )
+                    with execution_runtime_scope(execution_runtime):
+                        result_file = inspect_agent_result_file(
+                            str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
+                            str(item.get("agent_result_path") or ""),
+                        )
                     failed_cli_provider_without_result = not bool(result_file.get("exists"))
                 repairable_agent_result = (
                     agent_result_status in {"needs_agent_fix", "blocked", "invalid", "error", "completed"}
@@ -2901,8 +2912,10 @@ class AutomationService:
                 or ""
             ).strip()
             distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip()
-            effective_distro, _ = normalize_wsl_target_path(workspace_path, distro)
-            result = read_agent_result(effective_distro, result_path)
+            execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+            with execution_runtime_scope(execution_runtime):
+                effective_distro, _ = normalize_wsl_target_path(workspace_path, distro)
+                result = read_agent_result(effective_distro, result_path)
             result_summary = str(result.get("summary") or "").strip()
             if result_summary:
                 return result_summary
@@ -3099,6 +3112,7 @@ class AutomationService:
         agent_name = str(runtime_settings.get("copilot_agent_name") or "").strip()
         model_name = str(runtime_settings.get("copilot_model_name") or "").strip()
         distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip()
+        execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
         auto_launch = bool(runtime_settings.get("copilot_auto_launch"))
         desktop_url = str(runtime_settings.get("copilot_desktop_url") or "").strip()
         reference_docs_path = str(runtime_settings.get("copilot_reference_docs_path") or "").strip()
@@ -3178,6 +3192,7 @@ class AutomationService:
                     include_pr_diffs=bool(runtime_settings.get("context_capture_include_pr_diffs")),
                     max_tree_items=int(runtime_settings.get("context_capture_max_tree_items") or 50),
                     workspace_scan_roots=list(runtime_settings.get("context_capture_workspace_scan_roots") or ["/workspaces"]),
+                    execution_runtime=execution_runtime,
                 )
             except Exception as exc:
                 capture_package_files = build_capture_error_package(current_item, str(exc))
@@ -3185,25 +3200,26 @@ class AutomationService:
             capture_package_files = {}
 
         try:
-            result = prepare_cm_gpt_handoff(
-                distro=distro,
-                workspace_path=workspace_path,
-                branch_name=effective_branch_name,
-                agent_name=agent_name,
-                model_name=model_name,
-                item=current_item,
-                portal=portal,
-                provider=provider,
-                reference_docs_path=reference_docs_path,
-                prompt_template=prompt_template,
-                cli_command_template=cli_command_template,
-                auto_launch=auto_launch,
-                desktop_url=desktop_url,
-                strict_model_safety=strict_model_safety,
-                open_wsl_remote=open_wsl_remote,
-                vscode_window_mode=vscode_window_mode,
-                capture_package_files=capture_package_files,
-            )
+            with execution_runtime_scope(execution_runtime):
+                result = prepare_cm_gpt_handoff(
+                    distro=distro,
+                    workspace_path=workspace_path,
+                    branch_name=effective_branch_name,
+                    agent_name=agent_name,
+                    model_name=model_name,
+                    item=current_item,
+                    portal=portal,
+                    provider=provider,
+                    reference_docs_path=reference_docs_path,
+                    prompt_template=prompt_template,
+                    cli_command_template=cli_command_template,
+                    auto_launch=auto_launch,
+                    desktop_url=desktop_url,
+                    strict_model_safety=strict_model_safety,
+                    open_wsl_remote=open_wsl_remote,
+                    vscode_window_mode=vscode_window_mode,
+                    capture_package_files=capture_package_files,
+                )
         except CopilotIntegrationError as exc:
             mark_copilot_result(
                 portal=portal_name,
@@ -3256,6 +3272,7 @@ class AutomationService:
         workspace_path: str,
         branch_name: str,
         changed_files: List[str],
+        execution_runtime: str,
     ) -> Dict[str, Any]:
         if not changed_files:
             return {
@@ -3264,12 +3281,13 @@ class AutomationService:
                 "checks": [],
             }
         try:
-            return validate_agent_changes_for_push(
-                distro=distro,
-                workspace_path=workspace_path,
-                branch_name=branch_name,
-                changed_files=changed_files,
-            )
+            with execution_runtime_scope(execution_runtime):
+                return validate_agent_changes_for_push(
+                    distro=distro,
+                    workspace_path=workspace_path,
+                    branch_name=branch_name,
+                    changed_files=changed_files,
+                )
         except CopilotIntegrationError as exc:
             return {
                 "status": "failed",
@@ -3409,25 +3427,27 @@ class AutomationService:
                 runtime_settings=runtime_settings,
             )
 
-        result = prepare_cm_gpt_handoff(
-            distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
-            workspace_path=workspace_path,
-            branch_name=branch_name,
-            agent_name=str(runtime_settings.get("copilot_agent_name") or "").strip(),
-            model_name=str(runtime_settings.get("copilot_model_name") or "").strip(),
-            item=current_item,
-            portal=portal,
-            provider=provider,
-            reference_docs_path=str(runtime_settings.get("copilot_reference_docs_path") or "").strip(),
-            prompt_template=prompt_template,
-            cli_command_template=str(runtime_settings.get("copilot_cli_command_template") or "").strip(),
-            auto_launch=bool(runtime_settings.get("copilot_auto_launch")),
-            desktop_url=str(runtime_settings.get("copilot_desktop_url") or "").strip(),
-            strict_model_safety=bool(runtime_settings.get("copilot_strict_model_safety")),
-            open_wsl_remote=bool(runtime_settings.get("copilot_open_wsl_remote")),
-            vscode_window_mode=str(runtime_settings.get("copilot_vscode_window_mode") or "reuse").strip(),
-            allow_existing_changes=True,
-        )
+        execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+        with execution_runtime_scope(execution_runtime):
+            result = prepare_cm_gpt_handoff(
+                distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
+                workspace_path=workspace_path,
+                branch_name=branch_name,
+                agent_name=str(runtime_settings.get("copilot_agent_name") or "").strip(),
+                model_name=str(runtime_settings.get("copilot_model_name") or "").strip(),
+                item=current_item,
+                portal=portal,
+                provider=provider,
+                reference_docs_path=str(runtime_settings.get("copilot_reference_docs_path") or "").strip(),
+                prompt_template=prompt_template,
+                cli_command_template=str(runtime_settings.get("copilot_cli_command_template") or "").strip(),
+                auto_launch=bool(runtime_settings.get("copilot_auto_launch")),
+                desktop_url=str(runtime_settings.get("copilot_desktop_url") or "").strip(),
+                strict_model_safety=bool(runtime_settings.get("copilot_strict_model_safety")),
+                open_wsl_remote=bool(runtime_settings.get("copilot_open_wsl_remote")),
+                vscode_window_mode=str(runtime_settings.get("copilot_vscode_window_mode") or "reuse").strip(),
+                allow_existing_changes=True,
+            )
         mark_copilot_result(
             portal=portal_name,
             work_item_id=int(current_item["id"]),
@@ -3474,7 +3494,9 @@ class AutomationService:
         runtime_settings = load_runtime_settings()
         workspace_path = str(current_item.get("copilot_workspace_path") or portal.get("copilot_workspace_path") or "").strip()
         distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip()
-        effective_distro, normalized_workspace_path = normalize_wsl_target_path(workspace_path, distro)
+        execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+        with execution_runtime_scope(execution_runtime):
+            effective_distro, normalized_workspace_path = normalize_wsl_target_path(workspace_path, distro)
         result_path = str(current_item.get("agent_result_path") or "").strip()
         if not result_path and current_item.get("copilot_context_path"):
             result_path = str(current_item["copilot_context_path"]).rsplit("/", 1)[0] + "/agent-result.json"
@@ -3503,14 +3525,16 @@ class AutomationService:
                 "result_path": result_path,
             }
 
-        result = read_agent_result(effective_distro, result_path)
+        with execution_runtime_scope(execution_runtime):
+            result = read_agent_result(effective_distro, result_path)
         if (
             str(result.get("status") or "").strip().lower() != "waiting"
             and bool(current_item.get("auto_flow_enabled"))
             and not bool(current_item.get("has_pr"))
             and str(current_item.get("push_status") or "").strip().lower() != "pushed"
         ):
-            result_file = inspect_agent_result_file(effective_distro, result_path)
+            with execution_runtime_scope(execution_runtime):
+                result_file = inspect_agent_result_file(effective_distro, result_path)
             result_age = float(result_file.get("age_seconds") or 0.0)
             if bool(result_file.get("exists")) and result_age < AGENT_RESULT_STABILITY_SECONDS:
                 wait_message = (
@@ -3534,12 +3558,13 @@ class AutomationService:
                     "result_path": result_path,
                 }
         if str(result.get("status") or "").strip().lower() == "waiting":
-            provider_status = read_agent_provider_status(
-                effective_distro,
-                result_path=result_path,
-                log_path=str(current_item.get("copilot_provider_log_path") or ""),
-                process_id=str(current_item.get("copilot_process_id") or ""),
-            )
+            with execution_runtime_scope(execution_runtime):
+                provider_status = read_agent_provider_status(
+                    effective_distro,
+                    result_path=result_path,
+                    log_path=str(current_item.get("copilot_provider_log_path") or ""),
+                    process_id=str(current_item.get("copilot_process_id") or ""),
+                )
             if provider_status.get("terminal_error"):
                 provider_error = str(provider_status.get("error") or "The agent provider stopped before writing a result.")
                 mark_agent_result(
@@ -3569,10 +3594,11 @@ class AutomationService:
         expected_instruction_files: List[Dict[str, str]] = []
         acknowledgement_error = ""
         if str(result.get("status") or "").strip().lower() != "waiting" and not skip_pipeline_validation:
-            expected_instruction_files = discover_workspace_instruction_files(
-                effective_distro,
-                normalized_workspace_path,
-            )
+            with execution_runtime_scope(execution_runtime):
+                expected_instruction_files = discover_workspace_instruction_files(
+                    effective_distro,
+                    normalized_workspace_path,
+                )
             try:
                 validate_instruction_acknowledgement(
                     expected_instruction_files=expected_instruction_files,
@@ -3587,6 +3613,7 @@ class AutomationService:
                     workspace_path=normalized_workspace_path,
                     branch_name=branch_name,
                     changed_files=changed_files,
+                    execution_runtime=execution_runtime,
                 )
 
         repair_reasons: List[str] = []
@@ -3674,20 +3701,22 @@ class AutomationService:
             try:
                 if acknowledgement_error:
                     raise ServiceError(acknowledgement_error)
-                expected_instruction_files = discover_workspace_instruction_files(
-                    effective_distro,
-                    normalized_workspace_path,
-                )
+                with execution_runtime_scope(execution_runtime):
+                    expected_instruction_files = discover_workspace_instruction_files(
+                        effective_distro,
+                        normalized_workspace_path,
+                    )
                 validate_instruction_acknowledgement(
                     expected_instruction_files=expected_instruction_files,
                     agent_result=result,
                 )
-                result["pipeline_validation"] = validate_agent_changes_for_push(
-                    distro=effective_distro,
-                    workspace_path=normalized_workspace_path,
-                    branch_name=branch_name,
-                    changed_files=list(result.get("changed_files") or []),
-                )
+                with execution_runtime_scope(execution_runtime):
+                    result["pipeline_validation"] = validate_agent_changes_for_push(
+                        distro=effective_distro,
+                        workspace_path=normalized_workspace_path,
+                        branch_name=branch_name,
+                        changed_files=list(result.get("changed_files") or []),
+                    )
             except (ServiceError, CopilotIntegrationError) as exc:
                 error_message = str(exc)
                 mark_agent_result(
@@ -3750,21 +3779,24 @@ class AutomationService:
         runtime_settings = load_runtime_settings()
         workspace_path = str(current_item.get("copilot_workspace_path") or portal.get("copilot_workspace_path") or "").strip()
         distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip()
-        effective_distro, normalized_workspace_path = normalize_wsl_target_path(workspace_path, distro)
+        execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+        with execution_runtime_scope(execution_runtime):
+            effective_distro, normalized_workspace_path = normalize_wsl_target_path(workspace_path, distro)
         branch_name = str(current_item.get("effective_branch_name") or current_item.get("branch_name") or "").strip()
         if not branch_name:
             raise ServiceError("The work branch is not available for push.")
 
         try:
-            push_result = commit_and_push_agent_changes(
-                distro=effective_distro,
-                workspace_path=normalized_workspace_path,
-                branch_name=branch_name,
-                work_item_id=work_item_id,
-                title=str(current_item.get("title") or ""),
-                changed_files=list(agent_result.get("changed_files") or []),
-                summary=str(agent_result.get("summary") or ""),
-            )
+            with execution_runtime_scope(execution_runtime):
+                push_result = commit_and_push_agent_changes(
+                    distro=effective_distro,
+                    workspace_path=normalized_workspace_path,
+                    branch_name=branch_name,
+                    work_item_id=work_item_id,
+                    title=str(current_item.get("title") or ""),
+                    changed_files=list(agent_result.get("changed_files") or []),
+                    summary=str(agent_result.get("summary") or ""),
+                )
         except CopilotIntegrationError as exc:
             mark_push_result(
                 portal=portal_name,

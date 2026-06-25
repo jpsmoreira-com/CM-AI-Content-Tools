@@ -717,6 +717,33 @@ Cherry Pick integration task plan:
 Next recommended tasks:
 
 1. Test the capture package on a real work item with linked implementation PRs and compare generated drafts against the previous flow.
-2. Rebuild `DocumentationPortal-#12.0` in VS Code devcontainer and verify that post-create clones the central repo, installs dependencies, syncs `.agents/content-ai/`, and starts the dashboard task without manual setup.
+2. Remove or archive the standalone `projects/tfs-cherry-pick-dashboard` copy after confirming no unique source material remains there. Cherry Pick propagation is now integrated into this tool.
 3. Add a first-class dashboard view for captured PR details and local diffs if the `summary.md`/`manifest.json` view is not enough during review.
 4. Harden the dedicated worker/service deployment shape so production can run one continuous runner independently from the dashboard process.
+5. Continue reducing Windows-host assumptions in the agent execution path. CLI providers should run natively inside the devcontainer; VS Code/Microsoft 365 Copilot providers remain Windows-host integrations unless a supported Linux/devcontainer automation surface is introduced.
+
+2026-06-25 Devcontainer validation and execution portability:
+
+- Confirmed with the user that the `DocumentationPortal-#12.0` one-click devcontainer setup is functionally working: the central project is installed, target assets are synced, VS Code tasks are available, and status-bar buttons work.
+- Structural validation in the active devcontainer confirmed:
+  - target repository exists at `/workspaces/DocumentationPortal-#12.0`;
+  - `.agents/content-ai/` is synced into the target repository;
+  - `.agents/content-ai/`, `.automation-context/`, and `.automation-reports/` are excluded locally from the target repository Git index;
+  - pipeline virtual environment exists at `/home/vscode/.venvs/tfs-doc-automation-mvp`;
+  - `tfs-autonomous-pipeline` wrapper exists and is executable;
+  - VS Code task/settings/devcontainer JSON files are valid;
+  - pipeline source syntax validates inside the container.
+- Found a non-blocking environment inconsistency: the active container still has `CONTENT_AI_REPO_PATH=/home/vscode/.local/share/content-ai/CM-AI-Content-Skills`, while the current checked-in devcontainer files point to `/workspaces/CM-AI-Content-Skills`. Both clones currently point to `projects-initial-backup` at commit `c9c901f`; the active wrapper uses the `/home/vscode/.local/share/...` clone. A clean rebuild from the latest devcontainer files should align the environment, but the working setup is not blocked.
+- Decided that `CONTENT_AI_BRANCH=projects-initial-backup` should remain as the working branch for now. It is a local/user backup branch and should not be automatically changed to `main`.
+- Noted that the standalone Cherry Pick dashboard project is no longer needed as an active project because the functionality has migrated into this FastAPI tool. Do not delete it automatically without an explicit cleanup step.
+- Clarified the previous "wsl.exe" implementation note: it referred to Windows-host assumptions in the execution layer. The target operating model is still devcontainer-on-WSL. CLI providers such as Codex/Claude/custom CLI must run natively inside Linux/devcontainer, while VS Code Copilot and Microsoft 365 Desktop flows remain Windows-host integrations.
+- Updated `_run_wsl_script` so it uses `wsl.exe` only on Windows and uses local `bash -lc` when the dashboard is running inside Linux/devcontainer. The active container clone was also synchronized for immediate testing, and `container-native-ok` validation passed.
+
+2026-06-25 Execution runtime setting:
+
+- Added an explicit runtime setting named `Execution Runtime`.
+- Default value is `devcontainer`, meaning workspace commands run directly with local Linux tools such as `bash` and `git` inside the current devcontainer/WSL environment.
+- Optional value is `windows_host`, meaning workspace commands are bridged through `wsl.exe -d <distro>` so the dashboard can still run from Windows PowerShell when needed.
+- The setting is persisted as `DOC_AUTOMATION_EXECUTION_RUNTIME` in `.env`, exposed in `Settings > Automation`, and summarized in the Settings header next to the agent provider.
+- The setting is applied to the agent handoff, agent result polling, preflight validation, commit/push, context package viewer, and rich context capture local-diff collection.
+- Keep `devcontainer` as the default for the one-click setup. Switch to `windows_host` only when intentionally running the dashboard process outside the devcontainer on Windows.
