@@ -99,6 +99,9 @@ TFS_GIT_USERNAME_ENV = "CONTENT_AI_TFS_GIT_USERNAME"
 TFS_GIT_PASSWORD_ENV = "CONTENT_AI_TFS_GIT_PASSWORD"
 TFS_GIT_TOKEN_ENV = "CONTENT_AI_TFS_GIT_TOKEN"
 TFS_PULL_REQUEST_DESCRIPTION_LIMIT = 3900
+DEFAULT_RATIONALE_TEXT = (
+    "The changes align the documentation with the work item requirements and captured implementation evidence."
+)
 
 
 class ServiceError(RuntimeError):
@@ -752,12 +755,19 @@ def filter_pull_requests_for_repository(
         pull_request
         for pull_request in pull_requests
         if str(pull_request.get("repository_id") or "").strip().lower() == wanted
+        and not pull_request_is_abandoned(pull_request)
     ]
+
+
+def pull_request_is_abandoned(pull_request: Dict[str, Any]) -> bool:
+    return str(pull_request.get("status") or "").strip().lower() == "abandoned"
 
 
 def build_pull_request_index(pull_requests: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     indexed: Dict[str, Dict[str, Any]] = {}
     for pull_request in pull_requests:
+        if pull_request_is_abandoned(pull_request):
+            continue
         source_ref = str(pull_request.get("sourceRefName") or "").replace("refs/heads/", "").strip()
         if not source_ref:
             continue
@@ -1123,6 +1133,7 @@ class AutomationService:
         _cache_delete_prefix(("repository_refs", portal_name))
         _cache_delete_prefix(("repository_prs", portal_name))
         _cache_delete_prefix(("branch_pr", portal_name))
+        _cache_delete_prefix(("pull_request", portal_name))
 
     def _invalidate_portal_runtime_cache(self, portal_name: str) -> None:
         _cache_delete_prefix(("current_iteration", portal_name))
@@ -1231,7 +1242,7 @@ class AutomationService:
             return dict(cached_value)
 
         pull_requests: List[Dict[str, Any]] = []
-        for status in ["active", "completed", "abandoned"]:
+        for status in ["active", "completed"]:
             pull_requests.extend(
                 client.list_pull_requests(
                     repository_id,
@@ -1241,6 +1252,78 @@ class AutomationService:
             )
         index = build_pull_request_index(pull_requests)
         return dict(_cache_set(cache_key, index, REPOSITORY_SCAN_TTL_SECONDS))
+
+    def _get_pull_request_cached(
+        self,
+        portal_name: str,
+        client: TfsClient,
+        repository_id: str,
+        pull_request_id: int,
+    ) -> Dict[str, Any]:
+        cache_key = ("pull_request", portal_name, repository_id, int(pull_request_id))
+        cached_value = _cache_get(cache_key)
+        if cached_value is not _CACHE_MISS:
+            return dict(cached_value)
+        pull_request = client.get_pull_request(repository_id, int(pull_request_id))
+        return dict(_cache_set(cache_key, pull_request, REPOSITORY_SCAN_TTL_SECONDS))
+
+    def _filter_blocking_pull_request_links_for_repository(
+        self,
+        portal_name: str,
+        client: TfsClient,
+        pull_requests: List[Dict[str, Any]],
+        repository_id: str,
+    ) -> List[Dict[str, Any]]:
+        blocking_pull_requests: List[Dict[str, Any]] = []
+        for pull_request in filter_pull_requests_for_repository(pull_requests, repository_id):
+            try:
+                pull_request_id = int(pull_request.get("id") or pull_request.get("pullRequestId") or 0)
+            except (TypeError, ValueError):
+                pull_request_id = 0
+            if not pull_request_id:
+                continue
+            try:
+                current_pull_request = self._get_pull_request_cached(
+                    portal_name,
+                    client,
+                    repository_id,
+                    pull_request_id,
+                )
+            except Exception:
+                blocking_pull_requests.append(pull_request)
+                continue
+            if pull_request_is_abandoned(current_pull_request):
+                continue
+            enriched_pull_request = dict(pull_request)
+            for key in ("status", "title", "sourceRefName", "targetRefName", "creationDate", "_links"):
+                if current_pull_request.get(key) is not None:
+                    enriched_pull_request[key] = current_pull_request.get(key)
+            blocking_pull_requests.append(enriched_pull_request)
+        return blocking_pull_requests
+
+    def _stored_pull_request_is_abandoned(
+        self,
+        portal_name: str,
+        client: TfsClient,
+        repository_id: str,
+        pull_request_id: Any,
+    ) -> bool:
+        try:
+            normalized_pull_request_id = int(pull_request_id or 0)
+        except (TypeError, ValueError):
+            return False
+        if not normalized_pull_request_id:
+            return False
+        try:
+            pull_request = self._get_pull_request_cached(
+                portal_name,
+                client,
+                repository_id,
+                normalized_pull_request_id,
+            )
+        except Exception:
+            return False
+        return pull_request_is_abandoned(pull_request)
 
     def _find_pull_request_for_branch_cached(
         self,
@@ -1256,7 +1339,7 @@ class AutomationService:
         pull_request = client.find_pull_request(
             repository_id,
             source_branch,
-            statuses=["active", "completed", "abandoned"],
+            statuses=["active", "completed"],
         )
         return _cache_set(cache_key, pull_request, REPOSITORY_SCAN_TTL_SECONDS)
 
@@ -1771,11 +1854,15 @@ class AutomationService:
             stored_branch_status = str(item.get("branch_status") or "")
             stored_branch_name = str(item.get("branch_name") or "")
 
-            linked_target_work_item_prs = filter_pull_requests_for_repository(
+            linked_target_work_item_prs = self._filter_blocking_pull_request_links_for_repository(
+                portal["repository"],
+                client,
                 list(item.get("linked_work_item_prs", []) or []),
                 repository_id,
             )
-            linked_target_parent_prs = filter_pull_requests_for_repository(
+            linked_target_parent_prs = self._filter_blocking_pull_request_links_for_repository(
+                portal["repository"],
+                client,
                 list(item.get("linked_parent_prs", []) or []),
                 repository_id,
             )
@@ -1785,6 +1872,17 @@ class AutomationService:
             item["linked_parent_pr_count"] = len(item.get("linked_parent_prs", []) or [])
 
             has_pr = bool(item.get("pr_status") in {"created", "exists"} and item.get("pr_id"))
+            if has_pr and self._stored_pull_request_is_abandoned(
+                portal["repository"],
+                client,
+                repository_id,
+                item.get("pr_id"),
+            ):
+                item["pr_status"] = ""
+                item["pr_id"] = None
+                item["pr_url"] = ""
+                item["pr_match_source"] = ""
+                has_pr = False
             rerun_active = bool(item.get("rerun_active"))
             if not has_pr and not rerun_active and linked_target_work_item_prs:
                 linked_pr = linked_target_work_item_prs[0]
@@ -1857,7 +1955,7 @@ class AutomationService:
 
             if has_branch and not has_pr and branch_pull_requests:
                 existing_pr = branch_pull_requests.get(effective_branch_name)
-                if existing_pr:
+                if existing_pr and not pull_request_is_abandoned(existing_pr):
                     item["pr_status"] = "exists"
                     item["pr_id"] = existing_pr.get("pullRequestId")
                     item["pr_url"] = (
@@ -3136,7 +3234,7 @@ class AutomationService:
             repository_id,
             source_branch,
             target_branch,
-            statuses=["active", "completed", "abandoned"],
+            statuses=["active", "completed"],
         )
         reviewer_id = str(plan["reviewer_id"])
         reviewer_unique_name = str(plan["reviewer_unique_name"])
@@ -3331,11 +3429,11 @@ class AutomationService:
                 final_report.get("rationale")
                 or final_report.get("why")
                 or final_report.get("why_changed")
-                or "No detailed rationale was reported by the agent."
+                or DEFAULT_RATIONALE_TEXT
             )
         else:
             changes = final_report or summary
-            rationale = "No detailed rationale was reported by the agent."
+            rationale = DEFAULT_RATIONALE_TEXT
 
         changed_files = list(agent_result.get("changed_files") or [])
         report_lines = [

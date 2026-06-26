@@ -984,6 +984,11 @@ Order By [System.ChangedDate] Desc
         pull_requests.sort(key=lambda pull_request: str(pull_request.get("creationDate", "")), reverse=True)
         return pull_requests[0]
 
+    def get_pull_request(self, repository_id: str, pull_request_id: int) -> Dict[str, Any]:
+        url = self.build_url(f"git/repositories/{repository_id}/pullRequests/{int(pull_request_id)}")
+        payload = self.get_json(url) or {}
+        return payload if isinstance(payload, dict) else {}
+
     def create_pull_request(
         self,
         repository_id: str,
