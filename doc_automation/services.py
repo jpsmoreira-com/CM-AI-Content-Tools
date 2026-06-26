@@ -61,8 +61,10 @@ from .config import (
 from .context_capture import build_capture_error_package, build_context_capture_package
 from .storage import (
     get_work_item_states,
+    ensure_work_item_events_from_state,
     init_storage,
     list_auto_flow_states,
+    list_work_item_events,
     mark_agent_result,
     mark_agent_repair_started,
     mark_auto_flow_enabled,
@@ -2236,8 +2238,18 @@ class AutomationService:
         portal = get_portal_config(config, active_portal_name)
         work_item = self._get_live_work_item(portal["repository"], int(work_item_id))
         state = get_work_item_states(portal["repository"], [int(work_item_id)]).get(int(work_item_id))
+        ensure_work_item_events_from_state(
+            portal=portal["repository"],
+            work_item_id=int(work_item_id),
+            state=state,
+        )
         item = self._decorate_work_item(work_item, portal, state, runtime_settings)
         item = self._enrich_repository_state(portal, [item], remote_scan=True)[0]
+        item["automation_events"] = list_work_item_events(
+            portal["repository"],
+            int(work_item_id),
+            limit=75,
+        )
         return {
             "config": config,
             "portal": portal,

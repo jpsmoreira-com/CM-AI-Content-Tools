@@ -236,6 +236,45 @@
         {% endif %}
     </section>
 
+    <section class="detail-panel detail-panel-wide">
+        <h3>Automation History</h3>
+        {% if item.automation_events %}
+        <div class="audit-timeline">
+            {% for event in item.automation_events %}
+            <article class="audit-event is-{{ event.level }}">
+                <div class="audit-event-marker"></div>
+                <div class="audit-event-body">
+                    <div class="audit-event-header">
+                        <strong>{{ event.stage }}</strong>
+                        <span class="audit-event-status">{{ event.status }}</span>
+                        <time>{{ event.created_at }}</time>
+                    </div>
+                    <p>{{ event.message }}</p>
+                    {% if event.metadata %}
+                    <dl class="audit-event-metadata">
+                        {% for key, value in event.metadata.items() %}
+                        <div>
+                            <dt>{{ key | replace("_", " ") }}</dt>
+                            <dd>
+                                {% if "url" in key %}
+                                <a href="{{ value }}" target="_blank" rel="noreferrer noopener">{{ value }}</a>
+                                {% else %}
+                                <code>{{ value }}</code>
+                                {% endif %}
+                            </dd>
+                        </div>
+                        {% endfor %}
+                    </dl>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="small-note">No automation events have been recorded for this work item yet.</p>
+        {% endif %}
+    </section>
+
     <section class="detail-panel">
         <h3>Actions</h3>
         <div class="stack">

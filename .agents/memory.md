@@ -273,7 +273,7 @@ These names are still useful as a conceptual workflow vocabulary, but the curren
 - Add rules-based documentation impact classifier.
 - Add feedback controls: approve candidate, skip, needs manual review.
 - Add export of triage results.
-- Add durable run history and audit records for each automated stage.
+- [Done] Add durable run history and audit records for each automated stage.
 - Add configurable documentation repositories.
 - Add better reviewer fallback behavior when the assignee identity is incomplete.
 - Add a friendlier reviewer override editor on top of the current JSON textarea.
@@ -803,3 +803,11 @@ Next recommended tasks:
 - Found and fixed a flow bug where abandoned PR links attached to a parent work item could still be treated as blocking associated PRs.
 - The automation now validates linked PR references against the current TFS PR status, ignores abandoned PRs for work-item and branch matching, and avoids using abandoned PRs when creating a new draft PR.
 - Final report and draft PR description generation now use a useful default rationale instead of the empty fallback text `No detailed rationale was reported by the agent.`
+
+2026-06-26 Work item automation history:
+
+- Added durable `work_item_events` storage for per-work-item automation audit events.
+- Existing state transition helpers now append events for plan saves, branch results, agent handoff, automatic-flow enable/disable, agent repair launches, agent result checks, pushes, final report creation, reruns, and draft PR results.
+- Added idempotent legacy backfill from `work_item_state` so previously processed work items still show a useful initial timeline.
+- The lazy-loaded work item detail panel now includes an `Automation History` section with event stage, status, timestamp, message, level, and metadata such as branch names, paths, commits, and PR URLs.
+- Smoke tested in the active `DocumentationPortal-#12.0` devcontainer on WI `154513`; the detail view rendered a seven-event history from Plan through Draft PR.

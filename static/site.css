@@ -1024,6 +1024,109 @@ button[disabled] {
     background: var(--surface);
 }
 
+.audit-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.audit-event {
+    display: grid;
+    grid-template-columns: 0.9rem minmax(0, 1fr);
+    gap: 0.75rem;
+}
+
+.audit-event-marker {
+    width: 0.75rem;
+    height: 0.75rem;
+    margin-top: 0.35rem;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(21, 101, 216, 0.12);
+}
+
+.audit-event.is-success .audit-event-marker {
+    background: var(--success);
+    box-shadow: 0 0 0 4px rgba(34, 128, 84, 0.12);
+}
+
+.audit-event.is-warning .audit-event-marker {
+    background: var(--warning);
+    box-shadow: 0 0 0 4px rgba(188, 113, 0, 0.12);
+}
+
+.audit-event.is-error .audit-event-marker {
+    background: var(--error);
+    box-shadow: 0 0 0 4px rgba(196, 43, 28, 0.12);
+}
+
+.audit-event-body {
+    min-width: 0;
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.audit-event:last-child .audit-event-body {
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.audit-event-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 0.7rem;
+}
+
+.audit-event-header strong {
+    font-size: 0.95rem;
+}
+
+.audit-event-header time {
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.audit-event-status {
+    padding: 0.12rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.audit-event p {
+    margin: 0.35rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+.audit-event-metadata {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 0.45rem 0.75rem;
+    margin: 0.65rem 0 0;
+}
+
+.audit-event-metadata div {
+    min-width: 0;
+}
+
+.audit-event-metadata dt {
+    color: var(--muted);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+.audit-event-metadata dd {
+    margin: 0.15rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+.audit-event-metadata code {
+    white-space: normal;
+}
+
 .rerun-action {
     margin-top: 0.5rem;
     padding-top: 0.75rem;
