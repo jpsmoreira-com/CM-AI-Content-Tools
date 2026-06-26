@@ -5,6 +5,7 @@ TARGET_WORKSPACE="${CONTENT_AI_TARGET_WORKSPACE:-$PWD}"
 CONTENT_AI_REPO_PATH="${CONTENT_AI_REPO_PATH:-/workspaces/CM-AI-Content-Skills}"
 CONTENT_AI_REPO_URL="${CONTENT_AI_REPO_URL:-}"
 CONTENT_AI_BRANCH="${CONTENT_AI_BRANCH:-main}"
+CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturing.com}"
 PIPELINE_PROJECT_PATH="$CONTENT_AI_REPO_PATH/projects/tfs-doc-automation-mvp"
 PIPELINE_VENV="${TFS_AUTONOMOUS_PIPELINE_VENV:-$HOME/.venvs/tfs-doc-automation-mvp}"
 PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-8010}"
@@ -25,6 +26,76 @@ infer_target_repository() {
   fi
   basename "$TARGET_WORKSPACE"
 }
+
+git_credentials_are_available() {
+  credential_output="$(printf "url=https://%s/\n\n" "$CONTENT_AI_TFS_HOST" | git credential fill 2>/dev/null || true)"
+  printf "%s\n" "$credential_output" | grep -q '^password='
+}
+
+configure_tfs_git_credentials() {
+  if ! command -v git >/dev/null 2>&1; then
+    echo "Git was not found; skipping TFS Git credential preflight." >&2
+    return 0
+  fi
+  if git_credentials_are_available; then
+    echo "TFS Git credentials are already available for $CONTENT_AI_TFS_HOST."
+    return 0
+  fi
+
+  if [ -n "${CONTENT_AI_HOST_GIT_CREDENTIALS_PATH:-}" ]; then
+    if [ -f "$CONTENT_AI_HOST_GIT_CREDENTIALS_PATH" ]; then
+      cp "$CONTENT_AI_HOST_GIT_CREDENTIALS_PATH" "$HOME/.git-credentials"
+      chmod 600 "$HOME/.git-credentials" || true
+      git config --global credential.helper store
+      echo "Copied Git credentials from CONTENT_AI_HOST_GIT_CREDENTIALS_PATH."
+    else
+      echo "Configured CONTENT_AI_HOST_GIT_CREDENTIALS_PATH was not found: $CONTENT_AI_HOST_GIT_CREDENTIALS_PATH" >&2
+    fi
+  elif [ -n "${CONTENT_AI_TFS_GIT_USERNAME:-}" ] && { [ -n "${CONTENT_AI_TFS_GIT_PASSWORD:-}" ] || [ -n "${CONTENT_AI_TFS_GIT_TOKEN:-}" ]; }; then
+    CONTENT_AI_TFS_HOST="$CONTENT_AI_TFS_HOST" \
+    CONTENT_AI_TFS_GIT_USERNAME="$CONTENT_AI_TFS_GIT_USERNAME" \
+    CONTENT_AI_TFS_GIT_PASSWORD_VALUE="${CONTENT_AI_TFS_GIT_PASSWORD:-${CONTENT_AI_TFS_GIT_TOKEN:-}}" \
+    python3 - <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from urllib.parse import quote, urlparse
+
+host = os.environ["CONTENT_AI_TFS_HOST"]
+username = os.environ["CONTENT_AI_TFS_GIT_USERNAME"]
+password = os.environ["CONTENT_AI_TFS_GIT_PASSWORD_VALUE"]
+credential_path = Path.home() / ".git-credentials"
+credential_path.parent.mkdir(parents=True, exist_ok=True)
+existing = credential_path.read_text(encoding="utf-8", errors="replace").splitlines() if credential_path.exists() else []
+
+def matches_host(line: str) -> bool:
+    parsed = urlparse(line.strip())
+    if not parsed.netloc:
+        return False
+    return parsed.netloc.rsplit("@", 1)[-1].lower() == host.lower()
+
+retained = [line for line in existing if not matches_host(line)]
+retained.append(f"https://{quote(username, safe='')}:{quote(password, safe='')}@{host}")
+credential_path.write_text("\n".join(retained).rstrip() + "\n", encoding="utf-8")
+credential_path.chmod(0o600)
+PY
+    git config --global credential.helper store
+    echo "Configured TFS Git credentials from CONTENT_AI_TFS_GIT_USERNAME and token environment variables."
+  else
+    echo "TFS Git credentials are not available in this devcontainer yet." >&2
+    echo "Set CONTENT_AI_HOST_GIT_CREDENTIALS_PATH, or CONTENT_AI_TFS_GIT_USERNAME plus CONTENT_AI_TFS_GIT_PASSWORD/CONTENT_AI_TFS_GIT_TOKEN, before rebuilding." >&2
+    return 0
+  fi
+
+  if git_credentials_are_available; then
+    echo "TFS Git credentials validated for $CONTENT_AI_TFS_HOST."
+  else
+    echo "TFS Git credential setup ran, but Git still cannot resolve credentials for $CONTENT_AI_TFS_HOST." >&2
+  fi
+}
+
+configure_tfs_git_credentials
 
 if [ ! -d "$CONTENT_AI_REPO_PATH/.git" ]; then
   if [ -z "$CONTENT_AI_REPO_URL" ]; then
@@ -109,6 +180,8 @@ write_env_values(
         "DOC_AUTOMATION_SERVER_HOST": "0.0.0.0",
         "DOC_AUTOMATION_SERVER_PORT": pipeline_port,
         "DOC_AUTOMATION_SERVER_AUTO_PORT": "false",
+        "DOC_AUTOMATION_TFS_VERIFY_SSL": os.environ.get("CONTENT_AI_TFS_VERIFY_SSL", "false"),
+        "DOC_AUTOMATION_TFS_CA_BUNDLE_PATH": os.environ.get("CONTENT_AI_TFS_CA_BUNDLE_PATH", ""),
         "DOC_AUTOMATION_FINAL_REPORTS_PATH": f"{target_workspace}/.automation-reports",
         "DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON": json.dumps([target_workspace]),
     },

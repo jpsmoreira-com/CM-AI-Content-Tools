@@ -126,6 +126,21 @@ def _normalize_settings_tab(tab: str) -> str:
     return "connection"
 
 
+def _preflight_attention_message(label: str, preflight: object) -> str:
+    if not isinstance(preflight, dict):
+        return ""
+    if bool(preflight.get("ok", True)) and str(preflight.get("status") or "") not in {"warning"}:
+        return ""
+    message = str(preflight.get("message") or "Review the diagnostic details.").strip()
+    remediation = preflight.get("remediation")
+    if isinstance(remediation, dict) and remediation.get("message"):
+        message = f"{message} {str(remediation.get('message')).strip()}"
+    login = preflight.get("login")
+    if isinstance(login, dict) and login.get("message"):
+        message = f"{message} {str(login.get('message')).strip()}"
+    return f"{label}: {message}"
+
+
 @app.get("/", response_class=HTMLResponse, name="dashboard")
 def dashboard(
     request: Request,
@@ -490,11 +505,20 @@ def save_portal_settings(
             verify_work_items_via_api=verify_work_items_via_api,
             cherry_pick_skip_labels_text=cherry_pick_skip_labels_text,
         )
+        preflight_warning = _preflight_attention_message(
+            "TFS Git credentials",
+            saved_portal.get("_git_credentials_preflight"),
+        )
+        message = f"Saved settings for portal '{saved_portal['repository']}'."
+        level = "success"
+        if preflight_warning:
+            message = f"{message} {preflight_warning}"
+            level = "warning"
         return _redirect_to_settings(
             request,
             portal=saved_portal["repository"],
-            message=f"Saved settings for portal '{saved_portal['repository']}'.",
-            level="success",
+            message=message,
+            level=level,
             tab=active_settings_tab,
         )
     except (ServiceError, TfsApiError, RuntimeError) as exc:
@@ -515,6 +539,8 @@ def save_runtime_settings(
     server_port: int = Form(...),
     auto_port: bool = Form(False),
     tfs_request_timeout_seconds: int = Form(15),
+    tfs_verify_ssl: bool = Form(False),
+    tfs_ca_bundle_path: str = Form(""),
     automation_runner_enabled: bool = Form(False),
     automation_reconcile_interval_seconds: int = Form(30),
     automation_continuous_mode: bool = Form(False),
@@ -553,11 +579,13 @@ def save_runtime_settings(
     active_settings_tab: str = Form("automation"),
 ) -> RedirectResponse:
     try:
-        SERVICE.save_runtime_settings(
+        saved_settings = SERVICE.save_runtime_settings(
             server_host=server_host,
             server_port=server_port,
             auto_port=auto_port,
             tfs_request_timeout_seconds=tfs_request_timeout_seconds,
+            tfs_verify_ssl=tfs_verify_ssl,
+            tfs_ca_bundle_path=tfs_ca_bundle_path,
             automation_runner_enabled=automation_runner_enabled,
             automation_reconcile_interval_seconds=automation_reconcile_interval_seconds,
             automation_continuous_mode=automation_continuous_mode,
@@ -597,11 +625,34 @@ def save_runtime_settings(
         success_message = "Runtime settings saved to .env."
         if copilot_vscode_apply_settings:
             success_message = "Runtime settings saved to .env and applied to local VS Code Copilot settings."
+        message_level = "success"
+        preflight_warnings: list[str] = []
+        preflight = saved_settings.get("_agent_provider_preflight") if isinstance(saved_settings, dict) else None
+        if isinstance(preflight, dict) and not bool(preflight.get("ok", True)):
+            preflight_warnings.append(
+                _preflight_attention_message("Agent provider", preflight)
+                or "Agent provider: Unknown provider preflight error."
+            )
+        elif isinstance(preflight, dict) and str(preflight.get("status") or "") == "warning":
+            preflight_warnings.append(
+                _preflight_attention_message("Agent provider", preflight)
+                or "Agent provider: Review the provider diagnostics."
+            )
+        credential_preflight = SERVICE.check_portal_credentials(portal)
+        credential_warning = _preflight_attention_message("TFS Git credentials", credential_preflight)
+        if credential_warning:
+            preflight_warnings.append(credential_warning)
+        if preflight_warnings:
+            success_message = (
+                "Runtime settings saved, but one or more setup checks need attention. "
+                + " ".join(preflight_warnings)
+            )
+            message_level = "warning"
         return _redirect_to_settings(
             request,
             portal=portal,
             message=success_message,
-            level="success",
+            level=message_level,
             tab=active_settings_tab,
         )
     except (ServiceError, TfsApiError, RuntimeError) as exc:

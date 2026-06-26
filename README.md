@@ -210,9 +210,19 @@ CONTENT_AI_TARGET_WORKSPACE="$PWD" \
 bash /workspaces/CM-AI-Content-Skills/projects/tfs-doc-automation-mvp/scripts/devcontainer-bootstrap.sh
 ```
 
+For Git Credentials authentication inside a devcontainer, provide one of these optional bootstrap inputs before rebuild:
+
+- `CONTENT_AI_HOST_GIT_CREDENTIALS_PATH`, pointing to a mounted `.git-credentials` file that can be copied into the devcontainer user home;
+- `CONTENT_AI_TFS_GIT_USERNAME` plus `CONTENT_AI_TFS_GIT_PASSWORD` or `CONTENT_AI_TFS_GIT_TOKEN`, used to write a local `~/.git-credentials` entry for `CONTENT_AI_TFS_HOST`;
+- `CONTENT_AI_TFS_HOST`, when the TFS host is different from `tfs-product.cmf.criticalmanufacturing.com`.
+- `CONTENT_AI_TFS_VERIFY_SSL`, when the devcontainer should override the default internal setting for TFS SSL verification;
+- `CONTENT_AI_TFS_CA_BUNDLE_PATH`, when the devcontainer has a mounted corporate CA bundle that Python `requests` should trust.
+
 The bootstrap:
 
 - clones or updates the centralized `CM-AI-Content-Skills` checkout;
+- validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
+- writes TFS SSL runtime defaults for the devcontainer. Internal devcontainers default to `DOC_AUTOMATION_TFS_VERIFY_SSL=false` unless `CONTENT_AI_TFS_VERIFY_SSL` is provided;
 - installs the pipeline requirements into `~/.venvs/tfs-doc-automation-mvp`;
 - creates a `tfs-autonomous-pipeline` wrapper in `~/.local/bin`;
 - creates local runtime files for the target devcontainer, including `.env` and `config/tfs_dashboard.local.json`;
@@ -236,6 +246,16 @@ This supports scenarios where the development team owns the sprint board while d
 Performance timings are written to `data/performance.log`. The most useful events while diagnosing slow page loads are `dashboard.load`, `dashboard.work_item_query`, `dashboard.repository_enrichment`, and `tfs.request`.
 
 Note: current-iteration auto-resolution depends on the selected team having iterations configured in TFS team settings. If TFS returns no current iteration, leave the portal iteration team empty and narrow the dashboard with a manual iteration path. This keeps the initial dashboard render fast and avoids a slow TFS team-settings call that cannot produce a useful sprint path.
+
+## Pull Request Context Capture
+
+The rich context capture package includes linked implementation pull requests from the captured work item tree. For each PR, the package stores:
+
+- PR metadata, description, changed files, commits, and review comments;
+- a `diff.patch` generated from a local clone when the implementation repository exists in the configured workspace scan roots;
+- a TFS API fallback diff when no local clone is available. The fallback compares the PR `lastMergeTargetCommit` and `lastMergeSourceCommit` through the Git Items API and emits a synthetic unified diff for text files.
+
+The API fallback keeps context size bounded and skips binary, unavailable, or very large files rather than failing the full capture.
 
 The dashboard list is optimized as a paginated summary-first view. Initial renders use WIQL plus a lightweight work item batch for the visible page, skip remote branch/PR scans, and rely on local persisted state for card-level status. Full work item details, parent information, remote repository validation, and action forms are loaded on demand when a card is opened.
 

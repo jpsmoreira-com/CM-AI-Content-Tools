@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import html
 from html.parser import HTMLParser
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import threading
 import unicodedata
 from datetime import datetime
 import re as std_re
 import time
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlencode, urljoin, urlparse
+from urllib.parse import quote, urlencode, urljoin, urlparse
 
 from .branching import WORK_TYPES, merge_branch_plan, normalize_branch_name, version_prefix_from_branch
 from .cherry_picks import (
@@ -21,6 +24,7 @@ from .cherry_picks import (
 )
 from .copilot import (
     CopilotIntegrationError,
+    check_agent_provider_prerequisites,
     commit_and_push_agent_changes,
     discover_workspace_instruction_files,
     execution_runtime_scope,
@@ -32,6 +36,7 @@ from .copilot import (
     read_agent_result,
     read_agent_provider_status,
     read_wsl_text_file,
+    start_codex_device_login,
     validate_agent_changes_for_push,
     wsl_path_to_unc_path,
 )
@@ -70,7 +75,7 @@ from .storage import (
     start_rerun_state,
 )
 from .telemetry import log_performance, performance_span
-from .tfs_client import TfsApiError, TfsClient, build_pr_web_url, normalize_base_url
+from .tfs_client import TfsApiError, TfsClient, build_pr_web_url, git_credential_values, normalize_base_url
 
 
 _PORTAL_PATS: Dict[str, str] = {}
@@ -89,6 +94,11 @@ VSCODE_STALE_WAIT_RELAUNCH_SECONDS = 300.0
 MAX_AUTOMATIC_AGENT_REPAIR_ATTEMPTS = 1
 _AUTO_WORKER_LOCK = threading.Lock()
 _AUTO_WORKERS: set[tuple[str, int]] = set()
+GIT_CREDENTIAL_SOURCE_ENV = "CONTENT_AI_HOST_GIT_CREDENTIALS_PATH"
+TFS_GIT_USERNAME_ENV = "CONTENT_AI_TFS_GIT_USERNAME"
+TFS_GIT_PASSWORD_ENV = "CONTENT_AI_TFS_GIT_PASSWORD"
+TFS_GIT_TOKEN_ENV = "CONTENT_AI_TFS_GIT_TOKEN"
+TFS_PULL_REQUEST_DESCRIPTION_LIMIT = 3900
 
 
 class ServiceError(RuntimeError):
@@ -134,6 +144,252 @@ def strip_html(value: str) -> str:
     text = html.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def truncate_text(value: str, max_length: int, notice: str) -> str:
+    text = str(value or "").strip()
+    if max_length <= 0:
+        return ""
+    if len(text) <= max_length:
+        return text
+    clean_notice = str(notice or "").strip()
+    suffix = f"\n\n_{clean_notice}_" if clean_notice else ""
+    if len(suffix) >= max_length:
+        return text[:max_length].rstrip()
+    return text[: max_length - len(suffix)].rstrip() + suffix
+
+
+def markdown_h2_sections(value: str) -> Dict[str, str]:
+    sections: Dict[str, List[str]] = {}
+    current_title = ""
+    for line in str(value or "").splitlines():
+        match = re.match(r"^##\s+(.+?)\s*$", line)
+        if match:
+            current_title = match.group(1).strip()
+            sections.setdefault(current_title, [])
+            continue
+        if current_title:
+            sections[current_title].append(line)
+    return {title: "\n".join(lines).strip() for title, lines in sections.items()}
+
+
+def report_section_has_content(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    empty_markers = [
+        "No spec references were reported",
+        "No validation was reported",
+        "No reviewer notes were reported",
+        "No detailed rationale was reported",
+    ]
+    return not any(marker.lower() in text.lower() for marker in empty_markers)
+
+
+def _portal_tfs_host(portal: Dict[str, Any]) -> str:
+    parsed = urlparse(normalize_base_url(str(portal.get("base_url") or "")))
+    return parsed.netloc or parsed.path.strip("/")
+
+
+def _git_credential_store_path() -> Path:
+    return Path.home() / ".git-credentials"
+
+
+def _credential_line_matches_host(line: str, host: str) -> bool:
+    parsed = urlparse(line.strip())
+    if not parsed.netloc:
+        return False
+    return parsed.netloc.rsplit("@", 1)[-1].lower() == host.lower()
+
+
+def _set_git_credential_store_helper() -> None:
+    git = shutil.which("git")
+    if not git:
+        return
+    try:
+        subprocess.run(
+            [git, "config", "--global", "credential.helper", "store"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+
+
+def _write_git_store_credential(base_url: str, *, username: str, password: str) -> Dict[str, Any]:
+    parsed = urlparse(normalize_base_url(base_url))
+    scheme = parsed.scheme or "https"
+    host = parsed.netloc or parsed.path.strip("/")
+    if not host:
+        return {
+            "status": "error",
+            "ok": False,
+            "message": "Cannot write Git credentials because the TFS host is empty.",
+        }
+    if not username or not password:
+        return {
+            "status": "error",
+            "ok": False,
+            "message": (
+                f"Set both {TFS_GIT_USERNAME_ENV} and {TFS_GIT_PASSWORD_ENV} "
+                f"or {TFS_GIT_TOKEN_ENV} to configure Git credentials automatically."
+            ),
+        }
+
+    credential_path = _git_credential_store_path()
+    credential_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_lines = (
+        credential_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if credential_path.exists()
+        else []
+    )
+    retained_lines = [line for line in existing_lines if not _credential_line_matches_host(line, host)]
+    credential_url = (
+        f"{scheme}://{quote(username, safe='')}:{quote(password, safe='')}@{host}"
+    )
+    retained_lines.append(credential_url)
+    credential_path.write_text("\n".join(retained_lines).rstrip() + "\n", encoding="utf-8")
+    try:
+        credential_path.chmod(0o600)
+    except OSError:
+        pass
+    _set_git_credential_store_helper()
+    return {
+        "status": "repaired",
+        "ok": True,
+        "message": f"Stored Git credentials for {host} in {credential_path}.",
+        "source": "environment",
+    }
+
+
+def _copy_git_store_credentials(source_path: str) -> Dict[str, Any]:
+    expanded_source = Path(os.path.expandvars(os.path.expanduser(source_path)))
+    if not expanded_source.exists() or not expanded_source.is_file():
+        return {
+            "status": "error",
+            "ok": False,
+            "message": f"Configured Git credentials file was not found: {expanded_source}",
+            "source": str(expanded_source),
+        }
+    credential_path = _git_credential_store_path()
+    if expanded_source.resolve() != credential_path.resolve():
+        credential_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(expanded_source, credential_path)
+    try:
+        credential_path.chmod(0o600)
+    except OSError:
+        pass
+    _set_git_credential_store_helper()
+    return {
+        "status": "repaired",
+        "ok": True,
+        "message": f"Copied Git credentials from {expanded_source} to {credential_path}.",
+        "source": str(expanded_source),
+    }
+
+
+def _attempt_git_credentials_remediation(base_url: str) -> Dict[str, Any]:
+    source_path = str(os.environ.get(GIT_CREDENTIAL_SOURCE_ENV) or "").strip()
+    if source_path:
+        return _copy_git_store_credentials(source_path)
+
+    username = str(os.environ.get(TFS_GIT_USERNAME_ENV) or "").strip()
+    password = str(
+        os.environ.get(TFS_GIT_PASSWORD_ENV)
+        or os.environ.get(TFS_GIT_TOKEN_ENV)
+        or ""
+    ).strip()
+    if username or password:
+        return _write_git_store_credential(base_url, username=username, password=password)
+
+    return {
+        "status": "skipped",
+        "ok": False,
+        "message": (
+            "No automatic Git credential source is configured. "
+            f"Set {GIT_CREDENTIAL_SOURCE_ENV} to a mounted .git-credentials file, "
+            f"or set {TFS_GIT_USERNAME_ENV} and {TFS_GIT_PASSWORD_ENV}/{TFS_GIT_TOKEN_ENV} "
+            "before rebuilding the devcontainer."
+        ),
+    }
+
+
+def _check_git_credentials_for_portal(portal: Dict[str, Any]) -> Dict[str, Any]:
+    auth_mode = str(portal.get("auth_mode") or "").strip()
+    host = _portal_tfs_host(portal)
+    if auth_mode == "PAT":
+        return {
+            "status": "skipped",
+            "ok": True,
+            "message": "Portal uses PAT authentication; Git credential preflight is not required.",
+        }
+    runtime_settings = load_runtime_settings()
+    execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+    if auth_mode == "Windows Credentials" and execution_runtime == "devcontainer":
+        return {
+            "status": "error",
+            "ok": False,
+            "message": (
+                "Windows Credentials cannot be used from the devcontainer runtime. "
+                "Switch the portal to Git Credentials or PAT authentication."
+            ),
+            "host": host,
+        }
+    if auth_mode != "Git Credentials":
+        return {
+            "status": "skipped",
+            "ok": True,
+            "message": "Git credential preflight is not required for the selected authentication mode.",
+        }
+
+    base_url = normalize_base_url(str(portal.get("base_url") or ""))
+    try:
+        credentials = git_credential_values(base_url, timeout_seconds=10)
+        return {
+            "status": "ok",
+            "ok": True,
+            "message": f"Git credentials are available for {host}.",
+            "host": host,
+            "username": credentials.get("username", ""),
+        }
+    except TfsApiError as first_error:
+        remediation = _attempt_git_credentials_remediation(base_url)
+        if remediation.get("ok"):
+            try:
+                credentials = git_credential_values(base_url, timeout_seconds=10)
+                return {
+                    "status": "repaired",
+                    "ok": True,
+                    "message": f"Git credentials were configured and validated for {host}.",
+                    "host": host,
+                    "username": credentials.get("username", ""),
+                    "remediation": remediation,
+                }
+            except TfsApiError as second_error:
+                return {
+                    "status": "error",
+                    "ok": False,
+                    "message": str(second_error),
+                    "host": host,
+                    "remediation": remediation,
+                }
+        return {
+            "status": "error",
+            "ok": False,
+            "message": str(first_error),
+            "host": host,
+            "remediation": remediation,
+        }
+
+
+def _resolve_tfs_ssl_verify(runtime_settings: Dict[str, Any]) -> bool | str:
+    if not bool(runtime_settings.get("tfs_verify_ssl", True)):
+        return False
+    ca_bundle_path = str(runtime_settings.get("tfs_ca_bundle_path") or "").strip()
+    if ca_bundle_path:
+        return ca_bundle_path
+    return True
 
 
 class WorkItemHtmlSanitizer(HTMLParser):
@@ -1011,6 +1267,15 @@ class AutomationService:
             _PORTAL_PATS.pop(portal_name, None)
         self._invalidate_portal_runtime_cache(portal_name)
 
+    def check_portal_credentials(self, portal_name: str = "") -> Dict[str, Any]:
+        config = load_app_config()
+        portal_names = get_portal_names(config)
+        active_portal_name = portal_name or config["DEFAULT_PORTAL"]
+        if active_portal_name not in portal_names:
+            active_portal_name = config["DEFAULT_PORTAL"]
+        portal = get_portal_config(config, active_portal_name)
+        return _check_git_credentials_for_portal(portal)
+
     def get_settings_context(self, portal_name: str = "") -> Dict[str, Any]:
         config = load_app_config()
         runtime_settings = load_runtime_settings()
@@ -1154,6 +1419,7 @@ class AutomationService:
             auth_mode=auth_mode,
             pat=pat,
             timeout_seconds=int(runtime_settings.get("tfs_request_timeout_seconds") or 15),
+            verify_ssl=_resolve_tfs_ssl_verify(runtime_settings),
         )
 
     def load_cherry_pick_dashboard(
@@ -2162,6 +2428,8 @@ class AutomationService:
         server_port: int,
         auto_port: bool,
         tfs_request_timeout_seconds: int,
+        tfs_verify_ssl: bool,
+        tfs_ca_bundle_path: str,
         automation_runner_enabled: bool,
         automation_reconcile_interval_seconds: int,
         automation_continuous_mode: bool,
@@ -2204,6 +2472,8 @@ class AutomationService:
                 server_port=server_port,
                 auto_port=auto_port,
                 tfs_request_timeout_seconds=tfs_request_timeout_seconds,
+                tfs_verify_ssl=tfs_verify_ssl,
+                tfs_ca_bundle_path=tfs_ca_bundle_path,
                 automation_runner_enabled=automation_runner_enabled,
                 automation_reconcile_interval_seconds=automation_reconcile_interval_seconds,
                 automation_continuous_mode=automation_continuous_mode,
@@ -2245,10 +2515,44 @@ class AutomationService:
                     config=load_app_config(),
                     runtime_settings=saved,
                 )
+            saved["_agent_provider_preflight"] = self._check_agent_provider_prerequisites(saved)
             _CACHE.clear()
             return saved
         except ValueError as exc:
             raise ServiceError(str(exc)) from exc
+
+    def _check_agent_provider_prerequisites(self, runtime_settings: Dict[str, Any]) -> Dict[str, Any]:
+        provider = str(runtime_settings.get("copilot_provider") or "").strip()
+        if provider not in {"codex_cli", "claude_cli", "custom_cli"}:
+            return {
+                "status": "skipped",
+                "ok": True,
+                "message": "No CLI provider preflight is required for the selected agent provider.",
+            }
+        execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+        try:
+            with execution_runtime_scope(execution_runtime):
+                preflight = check_agent_provider_prerequisites(
+                    distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
+                    provider=provider,
+                    cli_command_template=str(runtime_settings.get("copilot_cli_command_template") or "").strip(),
+                )
+                message = str(preflight.get("message") or "").lower()
+                if (
+                    provider == "codex_cli"
+                    and not bool(preflight.get("ok"))
+                    and ("credential" in message or "auth" in message or "login" in message)
+                ):
+                    preflight["login"] = start_codex_device_login(
+                        distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
+                    )
+                return preflight
+        except CopilotIntegrationError as exc:
+            return {
+                "status": "error",
+                "ok": False,
+                "message": str(exc),
+            }
 
     def save_portal_settings(
         self,
@@ -2295,6 +2599,7 @@ class AutomationService:
             )
             self._invalidate_portal_runtime_cache(current_repository)
             self._invalidate_portal_runtime_cache(saved["repository"])
+            saved["_git_credentials_preflight"] = _check_git_credentials_for_portal(saved)
             return saved
         except ValueError as exc:
             raise ServiceError(str(exc)) from exc
@@ -2941,30 +3246,47 @@ class AutomationService:
     ) -> str:
         change_summary = self._resolve_draft_pr_summary(portal, current_item)
         final_report = self._resolve_final_report_text(current_item)
-        description_lines = [
-            "Summary:",
-            change_summary,
-        ]
+        footer_lines = [""]
+        final_report_path = str(current_item.get("final_report_path") or "").strip()
+        if final_report_path:
+            footer_lines.append(f"Full final report: {final_report_path}")
+        footer_lines.append(f"Work item link: {plan['url']}")
+        footer = "\n".join(footer_lines)
+
+        report_sections: Dict[str, str] = {}
         if final_report:
-            max_report_length = 12000
-            report_body = final_report
-            if len(report_body) > max_report_length:
-                report_body = report_body[:max_report_length].rstrip() + "\n\n_Report truncated in PR description. Open the dashboard report for the full version._"
-            description_lines.extend(
-                [
-                    "",
-                    "Final automation report:",
-                    "",
-                    report_body,
-                ]
+            report_sections = markdown_h2_sections(final_report)
+
+        summary_text = report_sections.get("Summary") or change_summary
+        description_sections: List[str] = []
+        for section_title, section_body in [
+            ("Work Item", report_sections.get("Work Item", "")),
+            ("Summary", summary_text),
+            ("Changes Made", report_sections.get("Changes Made", "")),
+            ("Why These Changes Were Made", report_sections.get("Why These Changes Were Made", "")),
+            ("Changed Files", report_sections.get("Changed Files", "")),
+            ("Spec References", report_sections.get("Spec References", "")),
+        ]:
+            clean_body = str(section_body or "").strip()
+            if not clean_body:
+                continue
+            description_sections.append(f"## {section_title}\n\n{clean_body}")
+
+        description = "\n\n".join(description_sections).strip()
+        if not description:
+            description = "## Summary\n\n" + change_summary
+
+        description += footer
+        if len(description) > TFS_PULL_REQUEST_DESCRIPTION_LIMIT:
+            description = (
+                truncate_text(
+                    description[: -len(footer)] if footer else description,
+                    TFS_PULL_REQUEST_DESCRIPTION_LIMIT - len(footer),
+                    "Description truncated in PR description.",
+                )
+                + footer
             )
-        description_lines.extend(
-            [
-                "",
-                f"Work item link: {plan['url']}",
-            ]
-        )
-        return "\n".join(description_lines)
+        return description[:TFS_PULL_REQUEST_DESCRIPTION_LIMIT]
 
     def _write_final_report(
         self,

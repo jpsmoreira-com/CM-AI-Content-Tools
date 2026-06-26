@@ -721,6 +721,11 @@ Next recommended tasks:
 3. Add a first-class dashboard view for captured PR details and local diffs if the `summary.md`/`manifest.json` view is not enough during review.
 4. Harden the dedicated worker/service deployment shape so production can run one continuous runner independently from the dashboard process.
 5. Continue reducing Windows-host assumptions in the agent execution path. CLI providers should run natively inside the devcontainer; VS Code/Microsoft 365 Copilot providers remain Windows-host integrations unless a supported Linux/devcontainer automation surface is introduced.
+6. Add workspace resolution UX for agent execution:
+   - default to the current devcontainer workspace when it matches the configured portal repository;
+   - support an explicit configured path for stable production use;
+   - scan `/workspaces` for matching clones and expose a dashboard/settings selector when multiple valid workspaces exist;
+   - validate the chosen workspace before launch by checking Git repository status, remote origin, selected branch/base branch access, and local-change safety.
 
 2026-06-25 Devcontainer validation and execution portability:
 
@@ -747,3 +752,42 @@ Next recommended tasks:
 - The setting is persisted as `DOC_AUTOMATION_EXECUTION_RUNTIME` in `.env`, exposed in `Settings > Automation`, and summarized in the Settings header next to the agent provider.
 - The setting is applied to the agent handoff, agent result polling, preflight validation, commit/push, context package viewer, and rich context capture local-diff collection.
 - Keep `devcontainer` as the default for the one-click setup. Switch to `windows_host` only when intentionally running the dashboard process outside the devcontainer on Windows.
+
+2026-06-25 Agent provider settings preflight:
+
+- Added a provider preflight when saving runtime/automation settings.
+- For `codex_cli`, the preflight runs `codex doctor --json` through the configured execution runtime and checks whether the CLI is installed and whether authentication is available in the runtime-specific `CODEX_HOME`.
+- Settings are still saved even when the provider preflight fails, but the dashboard returns a warning message so missing/expired auth is detected before launching a real work item.
+- This was added after a devcontainer run failed because the host Codex login did not exist inside `/home/vscode/.codex/auth.json`.
+- When the Codex preflight fails because authentication is missing, the dashboard now starts `codex login --device-auth` in the configured runtime and returns the browser URL/device code in the Settings warning. This avoids requiring less experienced users to open a devcontainer terminal and manually discover the right login command.
+- Added a similar preflight/remediation flow for TFS Git credentials inside the devcontainer.
+- Portal settings save now validates `Git Credentials` with `git credential fill` for the configured TFS host and returns a warning when the devcontainer user cannot resolve credentials.
+- Runtime settings save now also checks the selected portal credentials, so changing provider/runtime settings still surfaces missing TFS credentials before a real work item run.
+- Automatic remediation is intentionally explicit: the process can copy a mounted credentials file from `CONTENT_AI_HOST_GIT_CREDENTIALS_PATH`, or write a local store entry from `CONTENT_AI_TFS_GIT_USERNAME` plus `CONTENT_AI_TFS_GIT_PASSWORD`/`CONTENT_AI_TFS_GIT_TOKEN`.
+- The devcontainer bootstrap now performs the same Git credential preflight before cloning/updating the central `CM-AI-Content-Skills` repository and before writing the dashboard local config.
+- The immediate test fix that proved the path was copying the host `.git-credentials` into `/home/vscode/.git-credentials`, setting `credential.helper=store`, and validating with `git credential fill` plus `git ls-remote`.
+
+2026-06-25 TFS SSL runtime preflight:
+
+- A later dashboard load reached TFS with valid credentials but failed because Python `requests` inside the devcontainer could not verify the corporate TFS certificate chain.
+- Added runtime settings `DOC_AUTOMATION_TFS_VERIFY_SSL` and `DOC_AUTOMATION_TFS_CA_BUNDLE_PATH`.
+- The `TfsClient` now passes the configured verification value to both JSON API calls and binary asset downloads.
+- Runtime Settings exposes `Verify TFS SSL Certificate` and `TFS CA Bundle Path` so teams can either point to a corporate CA bundle or disable verification for trusted internal devcontainer environments.
+- The devcontainer bootstrap writes `DOC_AUTOMATION_TFS_VERIFY_SSL=false` by default for the internal one-click setup unless `CONTENT_AI_TFS_VERIFY_SSL` is explicitly provided. Use `CONTENT_AI_TFS_CA_BUNDLE_PATH` when a proper mounted CA bundle is available.
+
+2026-06-26 TFS API pull request diff fallback:
+
+- A real test run for WI 154513 proved that the rich context capture correctly collected the parent User Story 133754, the full child task tree, linked PR 88346, PR description, changed files, commits, and review comments.
+- The run failed before edits because the configured Codex CLI provider hit usage limits before writing `agent-result.json`; no push or draft PR was attempted, which is the expected safe behavior.
+- The only capture gap was PR diff availability: the linked implementation PR belonged to repository `Product`, which was not cloned under `/workspaces`, so the previous local-git diff strategy wrote `diff unavailable`.
+- Added a TFS API fallback for PR diffs. When no suitable local clone is found, the capture engine now uses PR `lastMergeTargetCommit`, `lastMergeSourceCommit`, iteration changes, and Git Items API content to generate a synthetic unified `diff.patch`.
+- The fallback protects the LLM context with file and total-size limits and skips binary or unavailable content instead of failing the whole capture.
+- Validation against PR 88346 produced `diff_source: tfs-api (16 file diff(s))` and a readable unified diff without requiring a local `Product` clone.
+
+2026-06-26 Draft PR description size limit:
+
+- A later WI 154513 run reached commit and push successfully, but Draft PR creation failed because TFS rejects pull request descriptions longer than 4000 characters.
+- The previous PR description included too much of the final report and could include audit-trail sections that are useful in the dashboard but not useful in the PR overview.
+- Draft PR descriptions are now capped below the TFS limit and include only reviewer-facing sections from the final report: Work Item, Summary, Changes Made, Why These Changes Were Made, Changed Files, and Spec References.
+- Detailed capture evidence, instruction files read, PRs reviewed, diffs reviewed, dashboard validation, and reviewer audit details remain in the full final report but are intentionally omitted from the Draft PR description.
+- Retried WI 154513 after the fix and created Draft PR 88746 successfully.

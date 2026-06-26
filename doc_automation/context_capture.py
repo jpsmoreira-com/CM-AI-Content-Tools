@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import html.parser
 import json
 import os
@@ -8,6 +9,7 @@ import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlencode
 
 from .tfs_client import (
     TfsApiError,
@@ -26,6 +28,9 @@ CHILD_RELATION_TYPES = {"System.LinkTypes.Hierarchy-Forward", "Hierarchy-Forward
 COMMIT_RE = re.compile(r"Git/Commit/([^/%]+)(?:%2[fF]|/)([^/%]+)(?:%2[fF]|/)([0-9a-f]+)", re.IGNORECASE)
 EXECUTION_RUNTIME_DEVCONTAINER = "devcontainer"
 EXECUTION_RUNTIME_WINDOWS_HOST = "windows_host"
+MAX_API_DIFF_FILES = 40
+MAX_API_DIFF_FILE_CHARS = 250_000
+MAX_API_DIFF_TOTAL_CHARS = 400_000
 
 
 class _HTMLText(html.parser.HTMLParser):
@@ -255,6 +260,178 @@ def fetch_pr_threads(client: TfsClient, repository_id: str, pull_request_id: int
                 }
             )
     return threads
+
+
+def git_item_url(client: TfsClient, repository_id: str, file_path: str, commit: str) -> str:
+    params = {
+        "api-version": client.api_version,
+        "path": file_path,
+        "versionDescriptor.version": commit,
+        "versionDescriptor.versionType": "commit",
+        "includeContent": "true",
+        "resolveLfs": "true",
+    }
+    return f"{client.base_url}/{client.project}/_apis/git/repositories/{repository_id}/items?{urlencode(params)}"
+
+
+def fetch_git_item_content(
+    client: TfsClient,
+    repository_id: str,
+    file_path: str,
+    commit: str,
+    *,
+    errors: List[str],
+    label: str,
+) -> Optional[str]:
+    if not file_path or not commit:
+        return None
+    try:
+        payload = client.get_json(git_item_url(client, repository_id, file_path, commit))
+    except TfsApiError as exc:
+        errors.append(f"{label}: {exc}")
+        return None
+    if not isinstance(payload, dict):
+        errors.append(f"{label}: TFS returned an unexpected item payload.")
+        return None
+    content = payload.get("content")
+    if not isinstance(content, str):
+        errors.append(f"{label}: content was not available as text.")
+        return None
+    if "\x00" in content:
+        errors.append(f"{label}: skipped binary content.")
+        return None
+    if len(content) > MAX_API_DIFF_FILE_CHARS:
+        errors.append(f"{label}: skipped because file content exceeded {MAX_API_DIFF_FILE_CHARS} characters.")
+        return None
+    return content
+
+
+def render_unified_file_diff(
+    *,
+    old_path: str,
+    old_content: str,
+    new_path: str,
+    new_content: str,
+    change_type: str,
+) -> str:
+    old_lines = old_content.splitlines()
+    new_lines = new_content.splitlines()
+    if old_content == new_content and change_type.lower() == "edit":
+        return ""
+    old_label = f"a{old_path if old_path.startswith('/') else '/' + old_path}"
+    new_label = f"b{new_path if new_path.startswith('/') else '/' + new_path}"
+    diff_lines = list(
+        difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=old_label,
+            tofile=new_label,
+            lineterm="",
+            n=3,
+        )
+    )
+    return "\n".join(diff_lines).rstrip() + "\n"
+
+
+def capture_api_diff(
+    *,
+    client: TfsClient,
+    repository_id: str,
+    repository_name: str,
+    pull_request_id: int,
+    pr: Dict[str, Any],
+    changes: List[Dict[str, Any]],
+    errors: List[str],
+) -> tuple[str, str]:
+    source_commit = str(((pr.get("lastMergeSourceCommit") or {}).get("commitId")) or "")
+    target_commit = str(((pr.get("lastMergeTargetCommit") or {}).get("commitId")) or "")
+    if not source_commit or not target_commit:
+        return "", "TFS API diff unavailable: PR source or target merge commit was missing"
+
+    patch_parts = [
+        f"# TFS API fallback diff for PR !{pull_request_id}",
+        f"# Repository: {repository_name}",
+        f"# Base target commit: {target_commit}",
+        f"# Source commit: {source_commit}",
+        "# Generated from Git Items API because no local clone was available.",
+        "",
+    ]
+    captured_files = 0
+    skipped_files = 0
+    total_chars = sum(len(part) + 1 for part in patch_parts)
+
+    for change in changes[:MAX_API_DIFF_FILES]:
+        item = change.get("item", {}) or {}
+        change_type = str(change.get("changeType") or "").lower()
+        new_path = str(item.get("path") or "").strip()
+        old_path = str(item.get("originalPath") or new_path).strip()
+        if not new_path and not old_path:
+            skipped_files += 1
+            continue
+
+        is_add = "add" in change_type
+        is_delete = "delete" in change_type
+        old_content = "" if is_add else fetch_git_item_content(
+            client,
+            repository_id,
+            old_path,
+            target_commit,
+            errors=errors,
+            label=f"PR {pull_request_id} old content {old_path}",
+        )
+        new_content = "" if is_delete else fetch_git_item_content(
+            client,
+            repository_id,
+            new_path,
+            source_commit,
+            errors=errors,
+            label=f"PR {pull_request_id} new content {new_path}",
+        )
+        if old_content is None or new_content is None:
+            skipped_files += 1
+            patch_parts.extend(
+                [
+                    f"diff --git a{old_path} b{new_path}",
+                    f"# skipped {change_type or 'change'}: text content was unavailable through TFS API",
+                    "",
+                ]
+            )
+            continue
+
+        file_diff = render_unified_file_diff(
+            old_path=old_path,
+            old_content=old_content,
+            new_path=new_path,
+            new_content=new_content,
+            change_type=change_type,
+        )
+        if not file_diff:
+            skipped_files += 1
+            continue
+        file_block = f"diff --git a{old_path} b{new_path}\n# changeType: {change_type or '?'}\n{file_diff}\n"
+        if total_chars + len(file_block) > MAX_API_DIFF_TOTAL_CHARS:
+            skipped_files += 1
+            patch_parts.append(
+                f"# diff truncated before {new_path}: total API diff limit "
+                f"{MAX_API_DIFF_TOTAL_CHARS} characters reached"
+            )
+            break
+        patch_parts.append(file_block)
+        total_chars += len(file_block)
+        captured_files += 1
+
+    if len(changes) > MAX_API_DIFF_FILES:
+        skipped_files += len(changes) - MAX_API_DIFF_FILES
+        patch_parts.append(f"# {len(changes) - MAX_API_DIFF_FILES} change(s) skipped by API diff file limit.")
+
+    if not captured_files:
+        return "", "TFS API diff unavailable: no changed text files could be captured"
+
+    source = f"tfs-api ({captured_files} file diff(s)"
+    if skipped_files:
+        source += f", {skipped_files} skipped/truncated"
+    source += ")"
+    return "\n".join(patch_parts).rstrip() + "\n", source
 
 
 def run_command(command: List[str], *, timeout_seconds: int = 120) -> subprocess.CompletedProcess[str]:
@@ -554,6 +731,19 @@ def render_pr_files(
             distro=distro,
             execution_runtime=execution_runtime,
         )
+        if not diff_text:
+            api_diff_text, api_diff_source = capture_api_diff(
+                client=client,
+                repository_id=repository_id,
+                repository_name=repository_name,
+                pull_request_id=pull_request_id,
+                pr=pr,
+                changes=changes,
+                errors=errors,
+            )
+            if api_diff_text:
+                diff_text = api_diff_text
+                diff_source = api_diff_source
     if not diff_text:
         diff_text = f"# diff unavailable: {diff_source or 'diff capture disabled'}\n"
 

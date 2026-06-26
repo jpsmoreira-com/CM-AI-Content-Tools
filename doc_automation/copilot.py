@@ -541,6 +541,192 @@ def _launch_cli_agent_in_wsl(
     }
 
 
+def check_agent_provider_prerequisites(
+    *,
+    distro: str,
+    provider: str,
+    cli_command_template: str,
+) -> Dict[str, Any]:
+    clean_provider = str(provider or "").strip()
+    if clean_provider not in {"codex_cli", "claude_cli", "custom_cli"}:
+        return {
+            "status": "skipped",
+            "ok": True,
+            "message": "No CLI provider preflight is required for the selected agent provider.",
+        }
+    if not str(cli_command_template or "").strip():
+        return {
+            "status": "error",
+            "ok": False,
+            "message": f"Configure a CLI command template before launching provider '{clean_provider}'.",
+        }
+    if clean_provider != "codex_cli":
+        return {
+            "status": "skipped",
+            "ok": True,
+            "message": f"No built-in preflight is available yet for provider '{clean_provider}'.",
+        }
+
+    script = r'''
+set -eu
+export PATH="$HOME/.local/node/current/bin:$HOME/.npm-global/bin:$PATH"
+codex_bin="$(command -v codex || true)"
+if [ -z "$codex_bin" ] && [ -x "$HOME/.npm-global/bin/codex" ]; then
+  codex_bin="$HOME/.npm-global/bin/codex"
+fi
+if [ -z "$codex_bin" ]; then
+  printf '{"overallStatus":"fail","checks":{"installation":{"status":"fail","summary":"Codex CLI executable was not found on PATH or at $HOME/.npm-global/bin/codex"}}}\n'
+  exit 20
+fi
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+"$codex_bin" doctor --json
+'''
+    result = _run_wsl_script(distro, script, timeout_seconds=60)
+    try:
+        payload = json.loads((result.stdout or "").strip() or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    checks = payload.get("checks") if isinstance(payload.get("checks"), dict) else {}
+    auth_check = checks.get("auth.credentials") if isinstance(checks.get("auth.credentials"), dict) else {}
+    install_check = checks.get("installation") if isinstance(checks.get("installation"), dict) else {}
+
+    if result.returncode == 20 or str(install_check.get("status") or "").lower() == "fail":
+        install_summary = str(install_check.get("summary") or "Codex CLI executable was not found.").strip()
+        return {
+            "status": "error",
+            "ok": False,
+            "message": install_summary,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+
+    if str(auth_check.get("status") or "").lower() == "fail":
+        summary = str(auth_check.get("summary") or "Codex CLI authentication is not ready.").strip()
+        remediation = str(auth_check.get("remediation") or "Run codex login inside the devcontainer.").strip()
+        auth_file = str(((auth_check.get("details") or {}).get("auth file")) or "$HOME/.codex/auth.json").strip()
+        return {
+            "status": "error",
+            "ok": False,
+            "message": f"{summary}. {remediation} Auth file: {auth_file}.",
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+
+    if result.returncode != 0 and str(payload.get("overallStatus") or "").lower() == "fail":
+        return {
+            "status": "warning",
+            "ok": True,
+            "message": "Codex CLI preflight completed with non-auth warnings. Review `codex doctor` if the agent launch still fails.",
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+
+    return {
+        "status": "ok",
+        "ok": True,
+        "message": "Codex CLI is installed and authentication is available for the configured runtime.",
+        "stdout": result.stdout.strip(),
+        "stderr": result.stderr.strip(),
+    }
+
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(value: str) -> str:
+    return ANSI_RE.sub("", str(value or ""))
+
+
+def start_codex_device_login(*, distro: str) -> Dict[str, Any]:
+    script = r'''
+set -eu
+export PATH="$HOME/.local/node/current/bin:$HOME/.npm-global/bin:$PATH"
+codex_bin="$(command -v codex || true)"
+if [ -z "$codex_bin" ] && [ -x "$HOME/.npm-global/bin/codex" ]; then
+  codex_bin="$HOME/.npm-global/bin/codex"
+fi
+if [ -z "$codex_bin" ]; then
+  echo "__DOC_AUTOMATION_ERROR__=Codex CLI executable was not found on PATH or at $HOME/.npm-global/bin/codex."
+  exit 20
+fi
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+mkdir -p "$CODEX_HOME/login"
+log_path="$CODEX_HOME/login/device-login-$(date +%Y%m%d-%H%M%S).log"
+nohup "$codex_bin" login --device-auth > "$log_path" 2>&1 &
+pid="$!"
+i=0
+while [ "$i" -lt 30 ]; do
+  if [ -f "$log_path" ] && grep -Eq "https://auth.openai.com/codex/device|Enter this one-time code|already logged in|Login successful" "$log_path"; then
+    break
+  fi
+  if ! kill -0 "$pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.5
+  i=$((i + 1))
+done
+echo "__DOC_AUTOMATION_PID__=$pid"
+echo "__DOC_AUTOMATION_LOG__=$log_path"
+if [ -f "$log_path" ]; then
+  cat "$log_path"
+fi
+'''
+    result = _run_wsl_script(distro, script, timeout_seconds=30)
+    output = _strip_ansi((result.stdout or "") + "\n" + (result.stderr or ""))
+    if result.returncode not in {0, 20}:
+        raise CopilotIntegrationError(output.strip() or "Failed to start Codex device login.")
+
+    process_id = ""
+    log_path = ""
+    error = ""
+    for line in output.splitlines():
+        if line.startswith("__DOC_AUTOMATION_PID__="):
+            process_id = line.split("=", 1)[1].strip()
+        elif line.startswith("__DOC_AUTOMATION_LOG__="):
+            log_path = line.split("=", 1)[1].strip()
+        elif line.startswith("__DOC_AUTOMATION_ERROR__="):
+            error = line.split("=", 1)[1].strip()
+
+    if error:
+        return {
+            "status": "error",
+            "ok": False,
+            "message": error,
+            "pid": process_id,
+            "log_path": log_path,
+            "output": output.strip(),
+        }
+
+    login_output = "\n".join(
+        line for line in output.splitlines() if not line.startswith("__DOC_AUTOMATION_")
+    )
+    url_match = re.search(r"https://auth\.openai\.com/codex/device", login_output)
+    code_match = re.search(r"\b[A-Z0-9]{4}-[A-Z0-9]{5}\b", login_output)
+    if "Login successful" in output or "already logged in" in output.lower():
+        message = "Codex CLI is already authenticated in the configured runtime."
+        status = "ok"
+    elif url_match and code_match:
+        message = (
+            f"Open {url_match.group(0)} and enter device code {code_match.group(0)}. "
+            "The login process is running in the configured runtime and will complete after authorization."
+        )
+        status = "pending"
+    else:
+        message = "Codex device login was started, but the device code was not detected yet. Check the login log."
+        status = "pending"
+
+    return {
+        "status": status,
+        "ok": status == "ok",
+        "message": message,
+        "url": url_match.group(0) if url_match else "",
+        "device_code": code_match.group(0) if code_match else "",
+        "pid": process_id,
+        "log_path": log_path,
+        "output": output.strip(),
+    }
+
+
 def _extract_image_sources(*html_sections: str) -> List[str]:
     image_sources: List[str] = []
     for html_section in html_sections:

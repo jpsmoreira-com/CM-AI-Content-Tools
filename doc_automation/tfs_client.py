@@ -15,6 +15,12 @@ try:
     from requests_ntlm import HttpNtlmAuth
 except ImportError:  # pragma: no cover - exercised only when optional devcontainer auth dependency is absent.
     HttpNtlmAuth = None  # type: ignore[assignment]
+try:
+    import urllib3
+    from urllib3.exceptions import InsecureRequestWarning
+except ImportError:  # pragma: no cover - urllib3 is a transitive requests dependency in normal installs.
+    urllib3 = None  # type: ignore[assignment]
+    InsecureRequestWarning = None  # type: ignore[assignment]
 
 from .telemetry import log_performance
 
@@ -361,6 +367,7 @@ class TfsClient:
         auth_mode: str,
         pat: str = "",
         timeout_seconds: int = 60,
+        verify_ssl: bool | str = True,
     ) -> None:
         self.base_url = normalize_base_url(base_url)
         self.project = project.strip()
@@ -369,6 +376,9 @@ class TfsClient:
         self.auth_mode = auth_mode
         self.pat = pat.strip()
         self.timeout_seconds = timeout_seconds
+        self.verify_ssl = verify_ssl
+        if self.verify_ssl is False and urllib3 and InsecureRequestWarning:
+            urllib3.disable_warnings(InsecureRequestWarning)
         self._git_auth: Any = None
 
     def build_url(self, path: str, **params: Any) -> str:
@@ -411,12 +421,21 @@ class TfsClient:
                     auth=auth,
                     json=body if body is not None else None,
                     timeout=self.timeout_seconds,
+                    verify=self.verify_ssl,
                 )
                 response.raise_for_status()
             except requests.HTTPError as exc:
                 request_failed = True
                 detail = response.text[:1200]
                 raise TfsApiError(f"{exc}\n{detail}") from exc
+            except requests.exceptions.SSLError as exc:
+                request_failed = True
+                relative_url = url.split("_apis/")[-1]
+                raise TfsApiError(
+                    "TFS SSL certificate verification failed while calling "
+                    f"{relative_url}. Configure the TFS CA bundle path in Runtime Settings, "
+                    "or disable TFS SSL verification only for trusted internal devcontainer environments."
+                ) from exc
             except requests.Timeout as exc:
                 request_failed = True
                 relative_url = url.split("_apis/")[-1]
@@ -478,12 +497,21 @@ class TfsClient:
                     headers=headers,
                     auth=auth,
                     timeout=self.timeout_seconds,
+                    verify=self.verify_ssl,
                 )
                 response.raise_for_status()
                 return {
                     "content_type": response.headers.get("Content-Type") or "application/octet-stream",
                     "content": response.content,
                 }
+            except requests.exceptions.SSLError as exc:
+                request_failed = True
+                relative_url = url.split("_apis/")[-1]
+                raise TfsApiError(
+                    "TFS SSL certificate verification failed while downloading "
+                    f"{relative_url}. Configure the TFS CA bundle path in Runtime Settings, "
+                    "or disable TFS SSL verification only for trusted internal devcontainer environments."
+                ) from exc
             except requests.Timeout as exc:
                 request_failed = True
                 relative_url = url.split("_apis/")[-1]

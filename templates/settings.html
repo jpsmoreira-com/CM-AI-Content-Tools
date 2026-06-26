@@ -573,6 +573,14 @@
                             <span>TFS Request Timeout (seconds)</span>
                             <input type="number" name="tfs_request_timeout_seconds" min="5" max="120" value="{{ runtime_settings.tfs_request_timeout_seconds }}">
                         </label>
+                        <label class="checkbox-field">
+                            <span>Verify TFS SSL Certificate</span>
+                            <input type="checkbox" name="tfs_verify_ssl" value="true" {% if runtime_settings.tfs_verify_ssl %}checked{% endif %}>
+                        </label>
+                        <label>
+                            <span>TFS CA Bundle Path</span>
+                            <input type="text" name="tfs_ca_bundle_path" value="{{ runtime_settings.tfs_ca_bundle_path }}" placeholder="/usr/local/share/ca-certificates/company-ca.pem">
+                        </label>
                     </div>
                 </section>
             </div>
