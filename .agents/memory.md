@@ -758,6 +758,7 @@ Next recommended tasks:
 - Added a provider preflight when saving runtime/automation settings.
 - For `codex_cli`, the preflight runs `codex doctor --json` through the configured execution runtime and checks whether the CLI is installed and whether authentication is available in the runtime-specific `CODEX_HOME`.
 - Settings are still saved even when the provider preflight fails, but the dashboard returns a warning message so missing/expired auth is detected before launching a real work item.
+
 - This was added after a devcontainer run failed because the host Codex login did not exist inside `/home/vscode/.codex/auth.json`.
 - When the Codex preflight fails because authentication is missing, the dashboard now starts `codex login --device-auth` in the configured runtime and returns the browser URL/device code in the Settings warning. This avoids requiring less experienced users to open a devcontainer terminal and manually discover the right login command.
 - Added a similar preflight/remediation flow for TFS Git credentials inside the devcontainer.
@@ -791,3 +792,14 @@ Next recommended tasks:
 - Draft PR descriptions are now capped below the TFS limit and include only reviewer-facing sections from the final report: Work Item, Summary, Changes Made, Why These Changes Were Made, Changed Files, and Spec References.
 - Detailed capture evidence, instruction files read, PRs reviewed, diffs reviewed, dashboard validation, and reviewer audit details remain in the full final report but are intentionally omitted from the Draft PR description.
 - Retried WI 154513 after the fix and created Draft PR 88746 successfully.
+
+2026-06-26 Real work item validation and abandoned PR handling:
+
+- Validated the end-to-end automatic flow on WI `154513` in `DocumentationPortal-#12.0`.
+- Abandoned the previous draft PR `88746`, deleted the old work branch, reset the persisted automation state, and relaunched the flow from a clean branch.
+- Confirmed the context capture package included related work items, repository instructions from `AGENTS.md` and `.agents/content-ai/`, and implementation PR evidence from PR `88346`.
+- The agent produced documentation changes, validation passed, the dashboard pushed commit `c65f293a0a0e6dcae61249c474f83d838b10dedd`, and draft PR `88780` was created successfully.
+- Confirmed the draft PR was linked to parent work item `133754`.
+- Found and fixed a flow bug where abandoned PR links attached to a parent work item could still be treated as blocking associated PRs.
+- The automation now validates linked PR references against the current TFS PR status, ignores abandoned PRs for work-item and branch matching, and avoids using abandoned PRs when creating a new draft PR.
+- Final report and draft PR description generation now use a useful default rationale instead of the empty fallback text `No detailed rationale was reported by the agent.`
