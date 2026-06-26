@@ -832,12 +832,6 @@ button[disabled] {
     color: var(--muted);
 }
 
-.detail-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1rem;
-}
-
 .detail-panel {
     display: flex;
     flex-direction: column;
@@ -855,6 +849,197 @@ button[disabled] {
 
 .detail-state {
     display: none;
+}
+
+.detail-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.detail-overview {
+    gap: 1rem;
+    border-left: 4px solid var(--accent);
+}
+
+.detail-overview-main {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(320px, 2fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.detail-kicker {
+    margin: 0 0 0.3rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.detail-signal-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+}
+
+.detail-signal-grid div {
+    min-width: 0;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+}
+
+.detail-signal-grid span,
+.detail-metadata-row dt,
+.detail-status-list dt {
+    display: block;
+    color: var(--muted);
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.detail-signal-grid strong,
+.detail-metadata-row dd,
+.detail-status-list dd {
+    overflow-wrap: anywhere;
+}
+
+.detail-progress-strip {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 0.35rem;
+}
+
+.detail-action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--border);
+}
+
+.inline-action-form {
+    margin: 0;
+}
+
+.inline-action-form button,
+.detail-action-bar .button-link {
+    min-height: 2.6rem;
+}
+
+.inline-action-form .secondary-action {
+    border-color: var(--border);
+    background: var(--surface);
+    color: var(--text);
+}
+
+.detail-metadata-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin: 0;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--border);
+}
+
+.detail-metadata-row div,
+.detail-status-list div {
+    min-width: 0;
+}
+
+.detail-metadata-row dd,
+.detail-status-list dd {
+    margin: 0.18rem 0 0;
+}
+
+.detail-accordion-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    align-items: start;
+}
+
+.detail-disclosure {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-alt);
+    overflow: hidden;
+}
+
+.detail-disclosure summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem;
+    cursor: pointer;
+    font-weight: 700;
+    list-style: none;
+}
+
+.detail-disclosure summary::-webkit-details-marker {
+    display: none;
+}
+
+.detail-disclosure summary::after {
+    content: "\25BC";
+    color: var(--accent);
+    font-size: 0.8rem;
+}
+
+.detail-disclosure[open] summary::after {
+    content: "\25B2";
+}
+
+.detail-disclosure summary small {
+    min-width: 0;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+    text-align: right;
+}
+
+.detail-disclosure-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 0 1rem 1rem;
+}
+
+.detail-disclosure-body > section,
+.detail-two-column > section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+
+.detail-disclosure-body h4 {
+    margin: 0;
+    font-size: 0.95rem;
+}
+
+.detail-two-column {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    align-items: start;
+}
+
+.detail-status-list {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+    margin: 0;
+}
+
+.detail-status-list code,
+.detail-metadata-row code {
+    white-space: normal;
 }
 
 .rich-section-stack {
@@ -1553,7 +1738,12 @@ details p {
     }
 
     .work-item-summary-grid,
-    .detail-grid {
+    .detail-accordion-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .detail-overview-main,
+    .detail-signal-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
@@ -1599,7 +1789,11 @@ details p {
     }
 
     .work-item-summary-grid,
-    .detail-grid {
+    .detail-accordion-grid,
+    .detail-overview-main,
+    .detail-signal-grid,
+    .detail-metadata-row,
+    .detail-two-column {
         grid-template-columns: 1fr;
     }
 

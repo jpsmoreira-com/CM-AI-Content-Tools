@@ -811,3 +811,13 @@ Next recommended tasks:
 - Added idempotent legacy backfill from `work_item_state` so previously processed work items still show a useful initial timeline.
 - The lazy-loaded work item detail panel now includes an `Automation History` section with event stage, status, timestamp, message, level, and metadata such as branch names, paths, commits, and PR URLs.
 - Smoke tested in the active `DocumentationPortal-#12.0` devcontainer on WI `154513`; the detail view rendered a seven-event history from Plan through Draft PR.
+
+2026-06-26 Work item detail UX redesign:
+
+- Reworked the lazy-loaded work item detail panel into a control-panel layout.
+- The top area now shows the active automation stage, branch/agent/push/PR status, progress strip, primary actions, effective branch, reviewer, and parent work item.
+- Moved noisy details into collapsible sections: `Automation`, `Work Item Context`, `Branch & Review`, and `Reports & Technical Evidence`.
+- Kept all existing forms, hidden fields, action gating, context package links, final report links, linked PRs, and rich work item rendering behavior.
+- Added CSS support for compact action bars, status signals, metadata rows, two-column detail groups, and disclosure panels.
+- Local validation passed with `git diff --check`, Jinja parsing, Python compilation, and direct template rendering inside the active devcontainer.
+- A live detail request in the active devcontainer could not complete because the container runtime currently lacks interactive TFS Git credential resolution; the dashboard homepage still responded successfully on port `8010`.
