@@ -886,3 +886,4 @@ Next recommended tasks:
 - The failing hook command used `proxy.criticalmanufacturing.io/davidanson/markdownlint-cli2:v0.12.1`; Docker failed before linting with `error getting credentials` because the devcontainer Docker config pointed to a broken credential helper.
 - Confirmed that the same image can be pulled with an isolated empty `DOCKER_CONFIG`, and that the repository hook then passes markdownlint successfully.
 - Added a push retry path: when `git push` fails with Docker credential-helper output, the automation retries the same push with a temporary isolated `DOCKER_CONFIG`. This keeps repository hooks enabled while avoiding stale devcontainer Docker credential stores.
+- Added idempotent push recovery: if a retry/race returns a non-zero push error but `origin/<branch>` already points to the local `HEAD`, the automation treats the push as successful instead of leaving the dashboard in an error state.

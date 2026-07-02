@@ -2022,6 +2022,51 @@ def _git_push_failed_on_docker_credentials(result: subprocess.CompletedProcess[s
     return "docker" in output and "error getting credentials" in output
 
 
+def _remote_branch_matches_local_head(
+    *,
+    distro: str,
+    workspace_path: str,
+    branch_name: str,
+) -> bool:
+    check_script = " && ".join(
+        [
+            f"local_sha=$(git -C {_shell_quote(workspace_path)} rev-parse HEAD)",
+            f"remote_sha=$(git -C {_shell_quote(workspace_path)} ls-remote origin refs/heads/{_shell_quote(branch_name)} | awk '{{print $1}}')",
+            '[ -n "$local_sha" ]',
+            '[ "$local_sha" = "$remote_sha" ]',
+        ]
+    )
+    result = _run_wsl_script(distro, check_script, timeout_seconds=60)
+    return result.returncode == 0
+
+
+def _push_success_from_remote_match(
+    result: subprocess.CompletedProcess[str],
+    *,
+    distro: str,
+    workspace_path: str,
+    branch_name: str,
+) -> subprocess.CompletedProcess[str]:
+    if result.returncode == 0:
+        return result
+    if not _remote_branch_matches_local_head(
+        distro=distro,
+        workspace_path=workspace_path,
+        branch_name=branch_name,
+    ):
+        return result
+    message = (
+        "Git push reported an error, but the remote branch already points to the local HEAD. "
+        "Treating the push as successful.\n"
+    )
+    return subprocess.CompletedProcess(
+        args=result.args,
+        returncode=0,
+        stdout=message + (result.stdout or ""),
+        stderr=result.stderr or "",
+    )
+
+
 def _run_git_push_with_docker_config_fallback(
     *,
     distro: str,
@@ -2030,6 +2075,12 @@ def _run_git_push_with_docker_config_fallback(
 ) -> subprocess.CompletedProcess[str]:
     push_script = f"git -C {_shell_quote(workspace_path)} push -u origin {_shell_quote(branch_name)}"
     push_result = _run_wsl_script(distro, push_script, timeout_seconds=600)
+    push_result = _push_success_from_remote_match(
+        push_result,
+        distro=distro,
+        workspace_path=workspace_path,
+        branch_name=branch_name,
+    )
     if push_result.returncode == 0 or not _git_push_failed_on_docker_credentials(push_result):
         return push_result
 
@@ -2041,6 +2092,12 @@ def _run_git_push_with_docker_config_fallback(
         ]
     )
     fallback_result = _run_wsl_script(distro, fallback_script, timeout_seconds=900)
+    fallback_result = _push_success_from_remote_match(
+        fallback_result,
+        distro=distro,
+        workspace_path=workspace_path,
+        branch_name=branch_name,
+    )
     if fallback_result.returncode == 0:
         fallback_result.stdout = (
             "Retried git push with an isolated DOCKER_CONFIG after the default Docker credential helper failed.\n"
