@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
@@ -46,9 +48,34 @@ DEFAULT_CONFIG = {
     "DEFAULT_PORTAL": "",
     "portals": [],
 }
+
+
+def get_persisted_settings_file(filename: str) -> Optional[Path]:
+    settings_root = os.environ.get("CONTENT_AI_SETTINGS_PATH", "").strip()
+    if not settings_root:
+        return None
+    return Path(settings_root).expanduser() / filename
+
+
+def restore_persisted_file(local_path: Path, filename: str) -> None:
+    if local_path.exists():
+        return
+    persisted_path = get_persisted_settings_file(filename)
+    if not persisted_path or not persisted_path.exists():
+        return
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(persisted_path, local_path)
+
+
+def mirror_persisted_file(local_path: Path, filename: str) -> None:
+    persisted_path = get_persisted_settings_file(filename)
+    if not persisted_path or not local_path.exists():
+        return
+    persisted_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(local_path, persisted_path)
 DEFAULT_RUNTIME_SETTINGS = {
     "server_host": "127.0.0.1",
-    "server_port": 8000,
+    "server_port": 7000,
     "auto_port": True,
     "tfs_request_timeout_seconds": 15,
     "tfs_verify_ssl": True,
@@ -223,6 +250,7 @@ def normalize_app_config(raw_config: Any) -> Dict[str, Any]:
 
 
 def load_app_config() -> Dict[str, Any]:
+    restore_persisted_file(LOCAL_CONFIG_PATH, "tfs_dashboard.local.json")
     active_path = LOCAL_CONFIG_PATH if LOCAL_CONFIG_PATH.exists() else CONFIG_PATH
     return normalize_app_config(load_json(active_path, DEFAULT_CONFIG))
 
@@ -231,6 +259,7 @@ def save_app_config(config: Dict[str, Any]) -> Dict[str, Any]:
     normalized = normalize_app_config(config)
     active_path = LOCAL_CONFIG_PATH if LOCAL_CONFIG_PATH.exists() else CONFIG_PATH
     save_json(active_path, normalized)
+    mirror_persisted_file(active_path, "tfs_dashboard.local.json")
     return normalized
 
 
@@ -289,6 +318,8 @@ def _strip_optional_quotes(value: str) -> str:
 
 
 def load_env_values(path: Path = ENV_PATH) -> Dict[str, str]:
+    if path == ENV_PATH:
+        restore_persisted_file(ENV_PATH, ".env")
     values: Dict[str, str] = {}
     if not path.exists():
         return values
@@ -355,6 +386,8 @@ def save_env_values(values: Dict[str, str], path: Path = ENV_PATH) -> None:
         serialized = json.dumps(value, ensure_ascii=False)
         lines.append(f"{key}={serialized}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if path == ENV_PATH:
+        mirror_persisted_file(path, ".env")
 
 
 def parse_bool(value: Any, default: bool) -> bool:

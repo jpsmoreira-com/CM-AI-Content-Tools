@@ -356,6 +356,10 @@ Suggested gates:
 
 Runtime settings are stored in a local `.env` file and edited through the dashboard.
 
+When `CONTENT_AI_SETTINGS_PATH` is configured, the dashboard mirrors `.env` and `config/tfs_dashboard.local.json` into that persistent folder and restores them when a fresh central checkout is created. Target devcontainers should bind-mount the WSL host `/workspaces` folder into the container, keep the central tool checkout at `/workspaces/CM-AI-Content-Skills`, keep persistent settings at `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`, and keep the active target repository mounted separately at `/app`. Mounting the full `/workspaces` tree also keeps Git worktree metadata visible when `/app/.git` points to a shared Git directory outside the opened worktree.
+
+Codex CLI runtime checks are evaluated inside the configured execution runtime, not on the WSL host by assumption. For devcontainers, the bootstrap sets `CODEX_HOME` and `NPM_CONFIG_PREFIX`, installs Codex CLI into the container user's npm prefix when enabled, and the dashboard preflight searches that prefix before running `codex doctor --json`. Mounting the host WSL `~/.codex` into the container can reuse authentication state, but the CLI executable still needs to be available inside the container.
+
 Current uses:
 
 - server host and preferred port;
@@ -375,21 +379,29 @@ Reusable Content AI instructions, skills, and agent assets are installed into ta
 .agents/content-ai/
 ```
 
-The sync process never overwrites a target repository root `AGENTS.md`. Repository-owned instructions remain authoritative for that repository. Managed shared assets live in the namespaced `.agents/content-ai/` folder and are referenced by the generated context package and prompts.
+The sync process copies the managed root `AGENTS.md` into the target repository root by default. This makes shared Content AI instructions visible to editor agents that only discover root-level instruction files. Repositories that must keep their own root `AGENTS.md` can opt out with `CONTENT_AI_SYNC_ROOT_AGENTS=false`.
+
+Managed shared assets also live in the namespaced `.agents/content-ai/` folder and are referenced by the generated context package and prompts.
 
 The sync source is the centralized `CM-AI-Content-Skills` repository:
 
 ```text
-AGENTS.md
+ai/instructions/AGENTS.md
 ai/manifest.json
 ai/skills/
 ai/agents/
 ai/instructions/
 ```
 
-The sync script writes `.agents/content-ai/install-manifest.json` with copied file checksums and adds `/.agents/content-ai/` to `.git/info/exclude` so the assets remain local runtime material by default.
+The sync script writes `.agents/content-ai/install-manifest.json` with copied file checksums and adds `/.agents/content-ai/` to `.git/info/exclude` so the assets remain local runtime material by default. It also excludes untracked root `AGENTS.md`; if the target repository already tracks `AGENTS.md`, it marks the file `skip-worktree` after writing the managed copy to avoid blocking automation safety checks with bootstrap-only local changes.
 
 Target devcontainers can call `scripts/devcontainer-bootstrap.sh` to clone or update the central asset repository, install the pipeline dependencies, create a local `tfs-autonomous-pipeline` wrapper, and sync managed assets into the current workspace.
+
+### 7.8.2 Workspace Serialization
+
+The automatic runner serializes work by target workspace path. A single Git working tree cannot safely host multiple concurrent branch checkouts or agent editing sessions, so selected work items are queued first and then processed by a per-workspace worker lock. The lock is held for the full lifecycle of one work item on that clone: agent launch, agent-result polling, dashboard validation, commit, push, and Draft PR creation.
+
+This still allows different repositories or different workspace clones to run independently, but prevents two work items from using the same clone at the same time.
 
 ### 7.9 Cherry Pick Propagation Analysis
 

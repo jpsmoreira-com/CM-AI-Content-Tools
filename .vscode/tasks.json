@@ -37,7 +37,7 @@
       "id": "dashboardPort",
       "type": "promptString",
       "description": "Dashboard port exposed by the devcontainer",
-      "default": "8000"
+      "default": "7000"
     }
   ]
 }

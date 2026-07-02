@@ -467,6 +467,72 @@ def set_pat(
     )
 
 
+@app.post("/auth/git-credentials")
+def setup_git_credentials(
+    request: Request,
+    portal: str = Form(...),
+    tfs_username: str = Form(""),
+    tfs_token: str = Form(""),
+    active_settings_tab: str = Form("connection"),
+) -> RedirectResponse:
+    try:
+        result = SERVICE.setup_portal_git_credentials(
+            portal_name=portal,
+            username=tfs_username,
+            token=tfs_token,
+        )
+        return _redirect_to_settings(
+            request,
+            portal=portal,
+            message=str(result.get("message") or "TFS Git credentials were configured."),
+            level="success" if bool(result.get("ok")) else "warning",
+            tab=active_settings_tab,
+        )
+    except (ServiceError, TfsApiError, RuntimeError) as exc:
+        return _redirect_to_settings(
+            request,
+            portal=portal,
+            message=f"Failed to configure TFS Git credentials: {exc}",
+            level="error",
+            tab=active_settings_tab,
+        )
+
+
+@app.post("/settings/portal/workspace")
+def save_portal_workspace(
+    request: Request,
+    portal: str = Form(...),
+    copilot_workspace_path: str = Form(...),
+    iteration_path: str = Form(""),
+    current_iteration_only: str = Form(""),
+    hide_closed: str = Form(""),
+) -> RedirectResponse:
+    try:
+        saved_portal = SERVICE.save_portal_workspace(
+            portal_name=portal,
+            copilot_workspace_path=copilot_workspace_path,
+        )
+        return _redirect_to_dashboard(
+            request,
+            portal=saved_portal["repository"],
+            iteration_path=iteration_path,
+            current_iteration_only=_parse_optional_bool(current_iteration_only),
+            hide_closed=_parse_optional_bool(hide_closed),
+            message=f"Target workspace set to {saved_portal.get('copilot_workspace_path')}.",
+            level="success",
+        )
+    except (ServiceError, RuntimeError) as exc:
+        return _redirect_to_dashboard(
+            request,
+            portal=portal,
+            iteration_path=iteration_path,
+            current_iteration_only=_parse_optional_bool(current_iteration_only),
+            hide_closed=_parse_optional_bool(hide_closed),
+            message=f"Failed to save target workspace: {exc}",
+            level="error",
+        )
+
+
 @app.post("/settings/portal")
 def save_portal_settings(
     request: Request,
@@ -1016,6 +1082,7 @@ def run_auto_flow(
         message = (
             f"Automatic flow processed {result['total']} items: "
             f"{summary['completed']} completed, "
+            f"{summary.get('queued', 0)} queued, "
             f"{summary['agent_running']} waiting for agent result, "
             f"{summary['already_has_pr']} already had PRs, "
             f"{summary['needs_plan']} need plan, "

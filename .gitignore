@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 .streamlit/
 .env
+.env.devcontainer-export
 config/*.local.json
 data/

@@ -821,3 +821,52 @@ Next recommended tasks:
 - Added CSS support for compact action bars, status signals, metadata rows, two-column detail groups, and disclosure panels.
 - Local validation passed with `git diff --check`, Jinja parsing, Python compilation, and direct template rendering inside the active devcontainer.
 - A live detail request in the active devcontainer could not complete because the container runtime currently lacks interactive TFS Git credential resolution; the dashboard homepage still responded successfully on port `8010`.
+
+2026-06-30 Devcontainer and publication hardening:
+
+- Removed internal runtime report paths from Draft PR descriptions. The PR description now keeps reviewer-facing final report sections plus the TFS work item link, but no longer publishes local paths such as `/app/.automation-reports/.../final-report.md`.
+- Changed the central dashboard default port from `8000` to `7000` in runtime defaults, `.env.example`, the central project devcontainer, VS Code task input defaults, and the devcontainer bootstrap wrapper. This avoids the common MkDocs `8000` port.
+- Kept the central project clone destination standardized as `CONTENT_AI_REPO_PATH=/workspaces/CM-AI-Content-Skills`; target repositories still mount as `/app` inside their devcontainer profiles, and that path is only the active target workspace.
+- Confirmed the `DocumentationPortal-#12.0` devcontainer bootstrap changes belong on branch `12.0/chore/content-ai-devcontainer-bootstrap`; used a separate worktree at `/workspaces/_review_worktrees/DocumentationPortal-content-ai-devcontainer-bootstrap` to avoid disturbing the active WI test branch.
+- Removed manual VS Code extension installation from the target repo `post-create.sh`. Status bar/task button extensions are now left to VS Code devcontainer recommendations and `customizations.vscode.extensions`.
+- Added a managed target-repository `ai/instructions/AGENTS.md` asset and updated the sync script to copy that file into the target repository root by default, while still copying the complete asset package under `.agents/content-ai/`.
+- The sync script now backs up a pre-existing root `AGENTS.md` under `.agents/content-ai/backups/`, excludes untracked root `AGENTS.md`, and marks tracked root `AGENTS.md` as `skip-worktree` after managed sync so bootstrap-only instruction updates do not block automation safety checks.
+- Added `CONTENT_AI_SYNC_ROOT_AGENTS=false` as the opt-out for repositories that must keep a repository-owned root `AGENTS.md`.
+
+2026-07-01 Persistent devcontainer tool checkout and settings:
+
+- Confirmed that the stale Windows dashboard process on port `8001` was a leftover local `uvicorn` instance and stopped it. The active devcontainer dashboard should use port `7000`.
+- The `DocumentationPortal-#12.0` devcontainer profiles now bind-mount `/workspaces/CM-AI-Content-Skills` into the container, so the central Content AI project clone is visible from the WSL host and reusable across target repositories instead of living only in the container filesystem.
+- Added a second bind mount for `/workspaces/.content-ai-settings`, with the pipeline settings path set to `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.
+- The devcontainer bootstrap now restores `.env` and `config/tfs_dashboard.local.json` from `CONTENT_AI_SETTINGS_PATH` when available, writes the devcontainer defaults, and mirrors the resulting files back to the persistent settings folder.
+- The dashboard settings save path now mirrors runtime `.env` and local portal config changes to `CONTENT_AI_SETTINGS_PATH`, so user configuration survives rebuilds and repo switches.
+- The intended layout is now: target repository at `/app`, central tool checkout at `/workspaces/CM-AI-Content-Skills`, and non-Git local settings at `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.
+- A follow-up test showed that opening the devcontainer from a Git worktree can leave `/app/.git` pointing to a shared Git directory outside the container mount, such as `/workspaces/DocumentationPortal-#12.0/.git/worktrees/...`. The target devcontainer profiles now mount the full WSL host `/workspaces` tree so Git worktree metadata, sibling repositories, the central tool checkout, and persistent settings are all visible inside the container.
+- Added an explicit `TFS Git Credentials Setup` form to the Settings > Connection page for portals using `Git Credentials`. The form writes the provided username/token through `git credential approve` into the devcontainer user's Git credential store, validates dashboard credential lookup, and validates repository access with `git ls-remote --heads origin`.
+- Confirmed that Windows Git/GCM credentials can be available on the host but not reusable by Linux Git inside the devcontainer. The one-click setup must therefore include an explicit in-container TFS credential step instead of assuming checkout credentials are automatically available to the automation runtime.
+
+2026-07-01 Codex CLI devcontainer preflight:
+
+- A Settings save showed `Codex CLI executable was not found on PATH or at $HOME/.npm-global/bin/codex` even though Codex was configured on the WSL host.
+- Root cause: the dashboard was running inside the devcontainer, where the WSL host Codex executable is not automatically available. The container needs its own executable on `PATH`, while auth can be reused through a mounted `CODEX_HOME`.
+- The active devcontainer now has Codex CLI installed at `/home/vscode/.npm-global/bin/codex` and uses mounted auth under `/home/vscode/.codex`.
+- Updated the Codex preflight and device-login scripts to export `CODEX_HOME`, `NPM_CONFIG_PREFIX`, and a devcontainer-safe `PATH`, and to search `$NPM_CONFIG_PREFIX/bin/codex` before falling back to `$HOME/.npm-global/bin/codex`.
+- Validated inside the active container that `codex doctor --json` reports `installation ok` and `auth.credentials ok`; the remaining overall warning was only that the Codex app server was not running, which does not block CLI execution for this automation.
+
+2026-07-01 Target workspace selector:
+
+- A WI run attempted to use the active devcontainer workspace (`/app`, backed by the 12.0 bootstrap worktree) even though the intended target for that task was `/workspaces/DocumentationPortal-#01`.
+- Added a Dashboard `Target Workspace` selector that discovers matching local clones under `/workspaces`, shows the currently selected workspace, and saves only the portal workspace path without requiring the full Settings form.
+- Added workspace suggestions to Settings > Connection for the manual `Agent Workspace Path` field.
+- Changed work item decoration to prefer the current portal workspace over any historical per-WI workspace stored from a previous agent handoff, so changing the target workspace affects the next automation action.
+- Fixed workspace discovery so `/workspaces` is treated as a scan root rather than being reduced to `/`.
+- Set the active `DocumentationPortal` portal workspace to `/workspaces/DocumentationPortal-#01` for the WI 152523 test.
+
+2026-07-01 Workspace-level automation serialization:
+
+- A parallel test with multiple WIs against the same `DocumentationPortal-#01` clone showed that independent worker threads could switch branches while another agent was still editing the same working tree.
+- Failure observed: WI 152535 produced a green-light `agent-result.json`, but dashboard validation ran while the clone was still on WI 152523's branch, causing `Workspace is on branch ... expected ...`.
+- Updated the bulk automatic flow so selected items are queued and scheduled instead of launching every agent immediately from the HTTP request.
+- Added a per-workspace runner lock. The automatic worker holds the lock for the whole lifecycle of one WI on that clone: launch, wait for agent result, validation, push, and draft PR creation. Other WIs targeting the same workspace remain active but wait their turn.
+- Updated the dashboard bulk summary to report queued items separately from items already waiting for agent output.
+- Recovered the affected WI 152535 by moving the generated `perform_setup.md` change from the WI 152523 branch onto the WI 152535 branch, then continuing the pipeline. WI 152523 created PR 89068 and WI 152535 created PR 89085.

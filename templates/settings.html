@@ -138,9 +138,22 @@
                         </label>
                         <label class="full-width">
                             <span>Agent Workspace Path</span>
-                            <input type="text" name="copilot_workspace_path" value="{{ portal.copilot_workspace_path }}" placeholder="\\\\wsl.localhost\\Ubuntu\\workspaces\\DocumentationPortal-#01">
+                            <input
+                                type="text"
+                                name="copilot_workspace_path"
+                                value="{{ portal.copilot_workspace_path }}"
+                                placeholder="\\\\wsl.localhost\\Ubuntu\\workspaces\\DocumentationPortal-#01"
+                                list="target-workspace-options"
+                            >
                         </label>
                     </div>
+                    {% if workspace_options %}
+                    <datalist id="target-workspace-options">
+                        {% for option in workspace_options %}
+                        <option value="{{ option.path }}">{{ option.label }}</option>
+                        {% endfor %}
+                    </datalist>
+                    {% endif %}
                     <p class="hint">The workspace path can be a Linux path such as <code>/workspaces/DocumentationPortal-#01</code>, a home-relative path such as <code>~/workspaces/DocumentationPortal-#01</code>, or a Windows UNC path such as <code>\\wsl.localhost\Ubuntu\workspaces\DocumentationPortal-#01</code>.</p>
                 </section>
 
@@ -239,6 +252,33 @@
         </div>
         <div class="actions">
             <button type="submit">Save PAT</button>
+        </div>
+    </form>
+</section>
+{% endif %}
+
+{% if portal.auth_mode == "Git Credentials" and active_settings_tab == "connection" %}
+<section class="band">
+    <form method="post" action="/auth/git-credentials" class="panel settings-panel">
+        <input type="hidden" name="portal" value="{{ selected_portal }}">
+        <input type="hidden" name="active_settings_tab" value="connection">
+        <div class="settings-group-header">
+            <h2>TFS Git Credentials Setup</h2>
+            <p>Configure the Git credential store used by this devcontainer for TFS API access, branch operations, pushes, and draft PR preparation.</p>
+        </div>
+        <div class="inline-form credential-setup-form">
+            <label class="inline-field grow">
+                <span>Username</span>
+                <input type="text" name="tfs_username" value="" autocomplete="username" placeholder="domain\\user or user@company.com">
+            </label>
+            <label class="inline-field grow">
+                <span>Token / Password</span>
+                <input type="password" name="tfs_token" value="" autocomplete="current-password" placeholder="PAT or Git password">
+            </label>
+        </div>
+        <p class="hint">The value is stored through <code>git credential approve</code> in the devcontainer user's Git credential store, not in the project repository or <code>.env</code>. The setup validates both credential lookup and <code>git ls-remote</code> against the selected portal workspace.</p>
+        <div class="actions">
+            <button type="submit">Save and Validate TFS Git Credentials</button>
         </div>
     </form>
 </section>

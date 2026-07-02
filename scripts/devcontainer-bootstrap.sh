@@ -8,7 +8,13 @@ CONTENT_AI_BRANCH="${CONTENT_AI_BRANCH:-main}"
 CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturing.com}"
 PIPELINE_PROJECT_PATH="$CONTENT_AI_REPO_PATH/projects/tfs-doc-automation-mvp"
 PIPELINE_VENV="${TFS_AUTONOMOUS_PIPELINE_VENV:-$HOME/.venvs/tfs-doc-automation-mvp}"
-PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-8010}"
+PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7000}"
+CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-/workspaces/.content-ai-settings/tfs-doc-automation-mvp}"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
+export CODEX_HOME
+export NPM_CONFIG_PREFIX
+export PATH="$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"
 
 infer_target_repository() {
   if [ -n "${CONTENT_AI_TARGET_REPOSITORY:-}" ]; then
@@ -95,12 +101,60 @@ PY
   fi
 }
 
+ensure_node_runtime() {
+  if command -v npm >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -s "/usr/local/share/nvm/nvm.sh" ]; then
+    # shellcheck disable=SC1091
+    . "/usr/local/share/nvm/nvm.sh"
+    nvm install --lts
+    nvm alias default 'lts/*' >/dev/null 2>&1 || true
+    nvm use --lts >/dev/null
+  fi
+}
+
+ensure_codex_cli() {
+  if [ "${TFS_AUTONOMOUS_INSTALL_CODEX_CLI:-true}" != "true" ]; then
+    return 0
+  fi
+  mkdir -p "$NPM_CONFIG_PREFIX/bin" "$CODEX_HOME"
+  ensure_node_runtime
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm was not found; skipping Codex CLI install. The dashboard will report a provider preflight warning if Codex CLI is selected." >&2
+    return 0
+  fi
+  if command -v codex >/dev/null 2>&1 || [ -x "$NPM_CONFIG_PREFIX/bin/codex" ]; then
+    echo "Codex CLI is already available."
+    return 0
+  fi
+  echo "Installing Codex CLI into $NPM_CONFIG_PREFIX..."
+  npm install -g @openai/codex
+}
+
 configure_tfs_git_credentials
+ensure_codex_cli
+
+if ! mkdir -p "$CONTENT_AI_SETTINGS_PATH" 2>/dev/null; then
+  if command -v sudo >/dev/null 2>&1; then
+    sudo mkdir -p "$CONTENT_AI_SETTINGS_PATH"
+    sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_SETTINGS_PATH"
+  else
+    echo "Could not create CONTENT_AI_SETTINGS_PATH: $CONTENT_AI_SETTINGS_PATH" >&2
+    exit 1
+  fi
+fi
+if [ ! -w "$CONTENT_AI_SETTINGS_PATH" ] && command -v sudo >/dev/null 2>&1; then
+  sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_SETTINGS_PATH"
+fi
 
 if [ ! -d "$CONTENT_AI_REPO_PATH/.git" ]; then
   if [ -z "$CONTENT_AI_REPO_URL" ]; then
     echo "CONTENT_AI_REPO_URL is required when $CONTENT_AI_REPO_PATH is not already cloned." >&2
     exit 1
+  fi
+  if [ -d "$CONTENT_AI_REPO_PATH" ] && [ ! -w "$CONTENT_AI_REPO_PATH" ] && command -v sudo >/dev/null 2>&1; then
+    sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_REPO_PATH"
   fi
   mkdir -p "$(dirname "$CONTENT_AI_REPO_PATH")"
   git clone --branch "$CONTENT_AI_BRANCH" "$CONTENT_AI_REPO_URL" "$CONTENT_AI_REPO_PATH"
@@ -123,6 +177,7 @@ fi
 "$PIPELINE_VENV/bin/python" -m pip install -r "$PIPELINE_PROJECT_PATH/requirements.txt"
 
 CONTENT_AI_PIPELINE_PROJECT_PATH="$PIPELINE_PROJECT_PATH" \
+CONTENT_AI_SETTINGS_PATH="$CONTENT_AI_SETTINGS_PATH" \
 CONTENT_AI_TARGET_REPOSITORY="$(infer_target_repository)" \
 CONTENT_AI_TARGET_WORKSPACE="$TARGET_WORKSPACE" \
 TFS_AUTONOMOUS_PIPELINE_PORT="$PIPELINE_PORT" \
@@ -137,14 +192,20 @@ from pathlib import Path
 
 
 project_path = Path(os.environ["CONTENT_AI_PIPELINE_PROJECT_PATH"])
+settings_path = Path(os.environ["CONTENT_AI_SETTINGS_PATH"])
 target_workspace = os.environ["CONTENT_AI_TARGET_WORKSPACE"]
 target_repository = os.environ["CONTENT_AI_TARGET_REPOSITORY"]
-pipeline_port = os.environ.get("TFS_AUTONOMOUS_PIPELINE_PORT", "8010")
+pipeline_port = os.environ.get("TFS_AUTONOMOUS_PIPELINE_PORT", "7000")
+settings_path.mkdir(parents=True, exist_ok=True)
 
 env_path = project_path / ".env"
 env_example_path = project_path / ".env.example"
-if not env_path.exists() and env_example_path.exists():
-    shutil.copyfile(env_example_path, env_path)
+persisted_env_path = settings_path / ".env"
+if not env_path.exists():
+    if persisted_env_path.exists():
+        shutil.copyfile(persisted_env_path, env_path)
+    elif env_example_path.exists():
+        shutil.copyfile(env_example_path, env_path)
 
 
 def read_env_lines(path: Path) -> list[str]:
@@ -186,9 +247,14 @@ write_env_values(
         "DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON": json.dumps([target_workspace]),
     },
 )
+shutil.copyfile(env_path, persisted_env_path)
 
 base_config_path = project_path / "config" / "tfs_dashboard.json"
 local_config_path = project_path / "config" / "tfs_dashboard.local.json"
+persisted_config_path = settings_path / "tfs_dashboard.local.json"
+if not local_config_path.exists() and persisted_config_path.exists():
+    local_config_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(persisted_config_path, local_config_path)
 source_config_path = local_config_path if local_config_path.exists() else base_config_path
 config = json.loads(source_config_path.read_text(encoding="utf-8"))
 portals = config.get("portals") or []
@@ -207,6 +273,7 @@ if matched_portal:
     config["DEFAULT_PORTAL"] = matched_portal
 local_config_path.parent.mkdir(parents=True, exist_ok=True)
 local_config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+shutil.copyfile(local_config_path, persisted_config_path)
 
 try:
     subprocess.run(
@@ -240,10 +307,14 @@ mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/tfs-autonomous-pipeline" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+export CONTENT_AI_SETTINGS_PATH="\${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_SETTINGS_PATH}"
+export CODEX_HOME="\${CODEX_HOME:-$CODEX_HOME}"
+export NPM_CONFIG_PREFIX="\${NPM_CONFIG_PREFIX:-$NPM_CONFIG_PREFIX}"
+export PATH="\$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:\$PATH"
 cd "$PIPELINE_PROJECT_PATH"
 case "\${1:-dashboard}" in
   dashboard)
-    exec "$PIPELINE_VENV/bin/python" -m uvicorn main:app --host "\${TFS_AUTONOMOUS_PIPELINE_HOST:-0.0.0.0}" --port "\${TFS_AUTONOMOUS_PIPELINE_PORT:-8010}"
+    exec "$PIPELINE_VENV/bin/python" -m uvicorn main:app --host "\${TFS_AUTONOMOUS_PIPELINE_HOST:-0.0.0.0}" --port "\${TFS_AUTONOMOUS_PIPELINE_PORT:-7000}"
     ;;
   worker)
     exec "$PIPELINE_VENV/bin/python" run_worker.py

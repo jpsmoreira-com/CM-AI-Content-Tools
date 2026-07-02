@@ -569,16 +569,20 @@ def check_agent_provider_prerequisites(
 
     script = r'''
 set -eu
-export PATH="$HOME/.local/node/current/bin:$HOME/.npm-global/bin:$PATH"
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
+export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$HOME/.npm-global/bin:$PATH"
 codex_bin="$(command -v codex || true)"
+if [ -z "$codex_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/codex" ]; then
+  codex_bin="$NPM_CONFIG_PREFIX/bin/codex"
+fi
 if [ -z "$codex_bin" ] && [ -x "$HOME/.npm-global/bin/codex" ]; then
   codex_bin="$HOME/.npm-global/bin/codex"
 fi
 if [ -z "$codex_bin" ]; then
-  printf '{"overallStatus":"fail","checks":{"installation":{"status":"fail","summary":"Codex CLI executable was not found on PATH or at $HOME/.npm-global/bin/codex"}}}\n'
+  printf '{"overallStatus":"fail","checks":{"installation":{"status":"fail","summary":"Codex CLI executable was not found on PATH or at $NPM_CONFIG_PREFIX/bin/codex"}}}\n'
   exit 20
 fi
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 "$codex_bin" doctor --json
 '''
     result = _run_wsl_script(distro, script, timeout_seconds=60)
@@ -640,16 +644,20 @@ def _strip_ansi(value: str) -> str:
 def start_codex_device_login(*, distro: str) -> Dict[str, Any]:
     script = r'''
 set -eu
-export PATH="$HOME/.local/node/current/bin:$HOME/.npm-global/bin:$PATH"
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
+export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$HOME/.npm-global/bin:$PATH"
 codex_bin="$(command -v codex || true)"
+if [ -z "$codex_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/codex" ]; then
+  codex_bin="$NPM_CONFIG_PREFIX/bin/codex"
+fi
 if [ -z "$codex_bin" ] && [ -x "$HOME/.npm-global/bin/codex" ]; then
   codex_bin="$HOME/.npm-global/bin/codex"
 fi
 if [ -z "$codex_bin" ]; then
-  echo "__DOC_AUTOMATION_ERROR__=Codex CLI executable was not found on PATH or at $HOME/.npm-global/bin/codex."
+  echo "__DOC_AUTOMATION_ERROR__=Codex CLI executable was not found on PATH or at $NPM_CONFIG_PREFIX/bin/codex."
   exit 20
 fi
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 mkdir -p "$CODEX_HOME/login"
 log_path="$CODEX_HOME/login/device-login-$(date +%Y%m%d-%H%M%S).log"
 nohup "$codex_bin" login --device-auth > "$log_path" 2>&1 &

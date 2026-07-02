@@ -129,6 +129,44 @@ code {
     align-items: end;
 }
 
+.workspace-switch-panel {
+    margin-top: 0.85rem;
+    background: var(--surface-alt);
+}
+
+.workspace-switch-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(320px, 520px) minmax(150px, 190px);
+    gap: 1rem;
+    align-items: end;
+}
+
+.workspace-copy {
+    min-width: 0;
+}
+
+.workspace-copy strong {
+    display: block;
+    margin-top: 0.35rem;
+    overflow-wrap: anywhere;
+}
+
+.workspace-copy p {
+    margin: 0.35rem 0 0;
+    color: var(--muted);
+}
+
+.secondary-button {
+    border-color: var(--border);
+    background: var(--surface);
+    color: var(--text);
+}
+
+.secondary-button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 .cherry-pick-controls {
     grid-template-columns: minmax(180px, 220px) repeat(2, minmax(120px, 160px)) repeat(4, minmax(140px, 1fr)) minmax(120px, 150px) auto;
     align-items: end;
@@ -205,6 +243,14 @@ button[disabled] {
 
 .inline-field.grow {
     flex: 1 1 auto;
+}
+
+.credential-setup-form {
+    flex-wrap: wrap;
+}
+
+.credential-setup-form .inline-field {
+    min-width: 260px;
 }
 
 .settings-grid {
@@ -1697,6 +1743,14 @@ details p {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .workspace-switch-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(260px, 1fr);
+    }
+
+    .workspace-switch-grid .actions {
+        grid-column: 1 / -1;
+    }
+
     .bulk-toolbar-row {
         flex-direction: column;
         align-items: stretch;
@@ -1765,9 +1819,14 @@ details p {
     }
 
     .top-grid,
+    .workspace-switch-grid,
     .inline-form {
         grid-template-columns: 1fr;
         display: grid;
+    }
+
+    .workspace-switch-grid .actions {
+        grid-column: auto;
     }
 
     .settings-grid {

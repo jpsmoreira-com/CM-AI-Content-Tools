@@ -44,7 +44,7 @@ Or:
 .\run_dashboard.ps1
 ```
 
-If port `8000` is already in use or blocked, `run_server.py` reads `.env` and can automatically move to the next free port.
+The default dashboard port is `7000` so it does not conflict with MkDocs, which commonly uses `8000`. If the preferred port is already in use or blocked, `run_server.py` reads `.env` and can automatically move to the next free port when automatic fallback is enabled.
 
 ## Implemented In This Slice
 
@@ -130,7 +130,7 @@ For CLI providers such as Codex, Claude, or a custom command:
 - use placeholders such as `{{prompt_path}}`, `{{workspace_path}}`, `{{workspace_unc_path}}`, `{{branch_name}}`, `{{model_name}}`, and `{{agent_result_path}}`;
 - the command is launched through the configured execution runtime and must write the expected `agent-result.json`.
 - for WSL repositories, prefer a native WSL CLI executable and `{{workspace_path}}`; using a Windows CLI against `{{workspace_unc_path}}` can fail when the agent process resolves the working directory.
-- for Codex CLI test runs, the local MVP uses the WSL user `CODEX_HOME` plus the native WSL npm install, so auth and state files stay inside Linux while the repository path remains `/workspaces/...`.
+- for Codex CLI test runs in a devcontainer, the CLI must exist inside the container runtime. The bootstrap uses `CODEX_HOME` (normally `/home/vscode/.codex`) and `NPM_CONFIG_PREFIX` (normally `/home/vscode/.npm-global`) so the container can reuse mounted Codex auth state while keeping the executable available on the container `PATH`.
 
 The automatic continuation contract is:
 
@@ -210,6 +210,8 @@ CONTENT_AI_TARGET_WORKSPACE="$PWD" \
 bash /workspaces/CM-AI-Content-Skills/projects/tfs-doc-automation-mvp/scripts/devcontainer-bootstrap.sh
 ```
 
+The recommended devcontainer layout keeps the target repository mounted at `/app`, bind-mounts the WSL host `/workspaces` folder into the container, keeps the central tool checkout at `/workspaces/CM-AI-Content-Skills`, and keeps persistent local settings under `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`. This avoids cloning the tool into the target repository or into an ephemeral container-only folder, and it keeps Git worktree metadata visible when the target workspace is opened from a linked worktree.
+
 For Git Credentials authentication inside a devcontainer, provide one of these optional bootstrap inputs before rebuild:
 
 - `CONTENT_AI_HOST_GIT_CREDENTIALS_PATH`, pointing to a mounted `.git-credentials` file that can be copied into the devcontainer user home;
@@ -217,27 +219,36 @@ For Git Credentials authentication inside a devcontainer, provide one of these o
 - `CONTENT_AI_TFS_HOST`, when the TFS host is different from `tfs-product.cmf.criticalmanufacturing.com`.
 - `CONTENT_AI_TFS_VERIFY_SSL`, when the devcontainer should override the default internal setting for TFS SSL verification;
 - `CONTENT_AI_TFS_CA_BUNDLE_PATH`, when the devcontainer has a mounted corporate CA bundle that Python `requests` should trust.
+- `CONTENT_AI_SETTINGS_PATH`, when the devcontainer should persist `.env` and `config/tfs_dashboard.local.json` somewhere other than `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.
+
+If those inputs are not configured, open `Settings > Connection` after the dashboard starts and use `TFS Git Credentials Setup`. That setup writes the provided username and token/password through `git credential approve` into the devcontainer user's Git credential store, then validates both dashboard credential lookup and `git ls-remote --heads origin`. Host Windows/GCM credentials are not assumed to be available inside Linux containers.
 
 The bootstrap:
 
 - clones or updates the centralized `CM-AI-Content-Skills` checkout;
 - validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
 - writes TFS SSL runtime defaults for the devcontainer. Internal devcontainers default to `DOC_AUTOMATION_TFS_VERIFY_SSL=false` unless `CONTENT_AI_TFS_VERIFY_SSL` is provided;
+- installs Codex CLI into the devcontainer user's npm prefix when `TFS_AUTONOMOUS_INSTALL_CODEX_CLI=true` and the executable is missing;
 - installs the pipeline requirements into `~/.venvs/tfs-doc-automation-mvp`;
 - creates a `tfs-autonomous-pipeline` wrapper in `~/.local/bin`;
 - creates local runtime files for the target devcontainer, including `.env` and `config/tfs_dashboard.local.json`;
-- points the active portal workspace to the target repository workspace, normally `/app`;
-- syncs managed AI assets into the target repository under `.agents/content-ai/`.
+- restores those local runtime files from `CONTENT_AI_SETTINGS_PATH` when available, then mirrors dashboard saves back to that folder;
+- points the active portal workspace to the target repository workspace, normally `/app` when the devcontainer mounts the repository there;
+- keeps the central tool checkout at `CONTENT_AI_REPO_PATH`, by default `/workspaces/CM-AI-Content-Skills`;
+- syncs managed AI assets into the target repository under `.agents/content-ai/`;
+- copies the managed root `AGENTS.md` into the target repository root so editor agents can discover the shared instructions immediately.
 
 Managed assets are copied from:
 
-- `AGENTS.md`;
+- `ai/instructions/AGENTS.md`, with fallback to root `AGENTS.md` if a custom asset repository does not provide the managed target baseline;
 - `ai/manifest.json`;
 - `ai/skills/`;
 - `ai/agents/`;
 - `ai/instructions/`.
 
-The target repository root `AGENTS.md` is never overwritten. The managed destination is `.agents/content-ai/`, and the sync script adds `/.agents/content-ai/` to the local `.git/info/exclude` file so these runtime assets remain local unless a repository explicitly chooses another policy.
+By default, the sync script overwrites the target repository root `AGENTS.md` with the managed Content AI version and keeps a copy under `.agents/content-ai/AGENTS.md`. This makes the shared instructions visible to editor agents that only discover root-level instruction files. Set `CONTENT_AI_SYNC_ROOT_AGENTS=false` before running the bootstrap if a repository must keep its own root `AGENTS.md`.
+
+The managed `.agents/content-ai/` folder is added to the local `.git/info/exclude` file. The root `AGENTS.md` is also locally excluded when it is untracked. If a target repository already tracks `AGENTS.md`, the sync marks it `skip-worktree` after writing the managed file so the bootstrap does not leave the repository dirty and block automation safety checks.
 
 The generated `config/tfs_dashboard.local.json` is intentionally ignored by Git. It lets each devcontainer point the dashboard to its own workspace without changing the shared `config/tfs_dashboard.json` baseline.
 

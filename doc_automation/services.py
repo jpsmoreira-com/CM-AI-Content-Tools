@@ -77,7 +77,7 @@ from .storage import (
     start_rerun_state,
 )
 from .telemetry import log_performance, performance_span
-from .tfs_client import TfsApiError, TfsClient, build_pr_web_url, git_credential_values, normalize_base_url
+from .tfs_client import TfsApiError, TfsClient, build_pr_web_url, clean_error_text, git_credential_values, normalize_base_url
 
 
 _PORTAL_PATS: Dict[str, str] = {}
@@ -96,6 +96,8 @@ VSCODE_STALE_WAIT_RELAUNCH_SECONDS = 300.0
 MAX_AUTOMATIC_AGENT_REPAIR_ATTEMPTS = 1
 _AUTO_WORKER_LOCK = threading.Lock()
 _AUTO_WORKERS: set[tuple[str, int]] = set()
+_WORKSPACE_LOCKS_LOCK = threading.Lock()
+_WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}
 GIT_CREDENTIAL_SOURCE_ENV = "CONTENT_AI_HOST_GIT_CREDENTIALS_PATH"
 TFS_GIT_USERNAME_ENV = "CONTENT_AI_TFS_GIT_USERNAME"
 TFS_GIT_PASSWORD_ENV = "CONTENT_AI_TFS_GIT_PASSWORD"
@@ -104,6 +106,7 @@ TFS_PULL_REQUEST_DESCRIPTION_LIMIT = 3900
 DEFAULT_RATIONALE_TEXT = (
     "The changes align the documentation with the work item requirements and captured implementation evidence."
 )
+MAX_WORKSPACE_OPTIONS = 40
 
 
 class ServiceError(RuntimeError):
@@ -200,6 +203,47 @@ def _git_credential_store_path() -> Path:
     return Path.home() / ".git-credentials"
 
 
+def _path_exists_as_git_workspace(path_value: str) -> bool:
+    clean_path = str(path_value or "").strip()
+    if not clean_path:
+        return False
+    if WINDOWS_ABSOLUTE_PATH_RE.match(clean_path) or clean_path.startswith("\\\\"):
+        return False
+    try:
+        path = Path(os.path.expanduser(clean_path))
+        return path.exists() and (path / ".git").exists()
+    except OSError:
+        return False
+
+
+def _workspace_option_label(path_value: str, *, current_path: str = "") -> str:
+    clean_path = str(path_value or "").strip()
+    if not clean_path:
+        return ""
+    if clean_path == "/app":
+        label = "/app (current devcontainer workspace)"
+    else:
+        label = Path(clean_path.rstrip("/")).name or clean_path
+    if current_path and clean_path.rstrip("/") == current_path.rstrip("/"):
+        label = f"{label} (selected)"
+    return label
+
+
+def _workspace_lock_key(path_value: str) -> str:
+    clean_path = str(path_value or "").strip().replace("\\", "/").rstrip("/")
+    return clean_path.lower() or "__unconfigured_workspace__"
+
+
+def _get_workspace_lock(path_value: str) -> threading.RLock:
+    key = _workspace_lock_key(path_value)
+    with _WORKSPACE_LOCKS_LOCK:
+        lock = _WORKSPACE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _WORKSPACE_LOCKS[key] = lock
+        return lock
+
+
 def _credential_line_matches_host(line: str, host: str) -> bool:
     parsed = urlparse(line.strip())
     if not parsed.netloc:
@@ -214,6 +258,12 @@ def _set_git_credential_store_helper() -> None:
     try:
         subprocess.run(
             [git, "config", "--global", "credential.helper", "store"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        subprocess.run(
+            [git, "config", "--global", "credential.useHttpPath", "true"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -265,6 +315,79 @@ def _write_git_store_credential(base_url: str, *, username: str, password: str) 
         "ok": True,
         "message": f"Stored Git credentials for {host} in {credential_path}.",
         "source": "environment",
+    }
+
+
+def _approve_git_credential(url: str, *, username: str, password: str) -> None:
+    git = shutil.which("git")
+    if not git:
+        raise ServiceError("Git executable was not found. Install Git or use PAT authentication.")
+    if not username.strip() or not password.strip():
+        raise ServiceError("Enter both a TFS Git username and token/password.")
+    credential_payload = (
+        f"url={normalize_base_url(url)}\n"
+        f"username={username.strip()}\n"
+        f"password={password.strip()}\n\n"
+    )
+    result = subprocess.run(
+        [git, "credential", "approve"],
+        input=credential_payload,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=15,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "Git credential approve failed."
+        raise ServiceError(detail)
+
+
+def _git_remote_url(workspace_path: str) -> str:
+    if not workspace_path.strip():
+        return ""
+    result = subprocess.run(
+        ["git", "-C", workspace_path.strip(), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _validate_git_remote_access(workspace_path: str) -> Dict[str, Any]:
+    if not workspace_path.strip():
+        return {
+            "status": "skipped",
+            "ok": True,
+            "message": "No workspace path is configured, so Git remote validation was skipped.",
+        }
+    git = shutil.which("git")
+    if not git:
+        raise ServiceError("Git executable was not found. Install Git or use PAT authentication.")
+    result = subprocess.run(
+        [git, "-C", workspace_path.strip(), "ls-remote", "--heads", "origin"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    if result.returncode == 0:
+        return {
+            "status": "ok",
+            "ok": True,
+            "message": "Git remote access validated with `git ls-remote --heads origin`.",
+        }
+    detail = result.stderr.strip() or result.stdout.strip() or "Git remote validation failed."
+    return {
+        "status": "error",
+        "ok": False,
+        "message": clean_error_text(detail),
     }
 
 
@@ -347,6 +470,39 @@ def _check_git_credentials_for_portal(portal: Dict[str, Any]) -> Dict[str, Any]:
             "ok": True,
             "message": "Git credential preflight is not required for the selected authentication mode.",
         }
+
+    workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
+    if workspace_path:
+        try:
+            result = subprocess.run(
+                ["git", "-C", workspace_path, "rev-parse", "--is-inside-work-tree"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {
+                "status": "error",
+                "ok": False,
+                "message": f"Could not validate Git workspace at '{workspace_path}': {exc}",
+                "host": host,
+            }
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            if ".git/worktrees" in detail or "not a git repository" in detail.lower():
+                detail = (
+                    f"The configured workspace '{workspace_path}' is not a valid Git repository inside the "
+                    "current devcontainer. If this workspace is a linked Git worktree, rebuild/reopen the "
+                    "devcontainer with the WSL /workspaces folder mounted so the shared .git metadata is visible."
+                )
+            return {
+                "status": "error",
+                "ok": False,
+                "message": detail or f"The configured workspace '{workspace_path}' is not a valid Git repository.",
+                "host": host,
+            }
 
     base_url = normalize_base_url(str(portal.get("base_url") or ""))
     try:
@@ -1131,6 +1287,87 @@ class AutomationService:
     def __init__(self) -> None:
         init_storage()
 
+    def discover_target_workspaces(
+        self,
+        *,
+        portal: Dict[str, Any],
+        runtime_settings: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        repository_name = str(portal.get("repository") or "").strip()
+        current_path = str(portal.get("copilot_workspace_path") or "").strip().rstrip("/")
+        scan_roots: List[str] = []
+
+        for candidate in ["/app", current_path, "/workspaces"]:
+            clean_candidate = str(candidate or "").strip().rstrip("/")
+            if not clean_candidate:
+                continue
+            if clean_candidate in {"/app", "/workspaces"}:
+                scan_roots.append(clean_candidate)
+                continue
+            parent = str(Path(clean_candidate).parent) if clean_candidate.startswith("/") else clean_candidate
+            scan_roots.append(parent)
+
+        for root in list(runtime_settings.get("context_capture_workspace_scan_roots") or []):
+            scan_roots.append(str(root or "").strip().rstrip("/"))
+
+        normalized_roots: List[str] = []
+        for root in scan_roots:
+            if root and root not in normalized_roots and root.startswith("/"):
+                normalized_roots.append(root)
+
+        candidates: List[str] = []
+        if current_path:
+            candidates.append(current_path)
+        if Path("/app/.git").exists():
+            candidates.append("/app")
+
+        for root in normalized_roots:
+            try:
+                root_path = Path(root)
+                if not root_path.exists() or not root_path.is_dir():
+                    continue
+                if root == "/app":
+                    continue
+                for child in root_path.iterdir():
+                    if not child.is_dir():
+                        continue
+                    name = child.name
+                    if repository_name and not (name == repository_name or name.startswith(f"{repository_name}-")):
+                        continue
+                    candidates.append(str(child))
+            except OSError:
+                continue
+
+        unique_candidates: List[str] = []
+        for candidate in candidates:
+            clean_candidate = str(candidate or "").strip().rstrip("/")
+            if not clean_candidate or clean_candidate in unique_candidates:
+                continue
+            unique_candidates.append(clean_candidate)
+            if len(unique_candidates) >= MAX_WORKSPACE_OPTIONS:
+                break
+
+        def sort_key(path_value: str) -> tuple[int, str]:
+            if current_path and path_value == current_path:
+                return (0, path_value.lower())
+            if path_value.endswith("-#01"):
+                return (1, path_value.lower())
+            if path_value == "/app":
+                return (2, path_value.lower())
+            return (3, path_value.lower())
+
+        unique_candidates.sort(key=sort_key)
+        return [
+            {
+                "path": candidate,
+                "label": _workspace_option_label(candidate, current_path=current_path),
+                "exists": Path(candidate).exists() if candidate.startswith("/") else False,
+                "is_git": _path_exists_as_git_workspace(candidate),
+                "is_current": bool(current_path and candidate == current_path),
+            }
+            for candidate in unique_candidates
+        ]
+
     def _invalidate_portal_repository_cache(self, portal_name: str) -> None:
         _cache_delete_prefix(("repository_refs", portal_name))
         _cache_delete_prefix(("repository_prs", portal_name))
@@ -1361,6 +1598,69 @@ class AutomationService:
         portal = get_portal_config(config, active_portal_name)
         return _check_git_credentials_for_portal(portal)
 
+    def setup_portal_git_credentials(
+        self,
+        *,
+        portal_name: str,
+        username: str,
+        token: str,
+    ) -> Dict[str, Any]:
+        clean_username = username.strip()
+        clean_token = token.strip()
+        if not clean_username or not clean_token:
+            raise ServiceError("Enter both the TFS Git username and token/password.")
+
+        config = load_app_config()
+        portal_names = get_portal_names(config)
+        active_portal_name = portal_name or config["DEFAULT_PORTAL"]
+        if active_portal_name not in portal_names:
+            active_portal_name = config["DEFAULT_PORTAL"]
+        portal = get_portal_config(config, active_portal_name)
+        if str(portal.get("auth_mode") or "").strip() != "Git Credentials":
+            raise ServiceError("Switch the selected portal to Git Credentials before configuring Git credentials.")
+
+        base_url = normalize_base_url(str(portal.get("base_url") or ""))
+        project = str(portal.get("project") or "").strip()
+        repository = str(portal.get("repository") or "").strip()
+        workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
+        repository_url = ""
+        if base_url and project and repository:
+            repository_url = f"{base_url}/{quote(project, safe='')}/_git/{quote(repository, safe='')}"
+        remote_url = _git_remote_url(workspace_path)
+
+        credential_urls: List[str] = []
+        for candidate in [base_url, repository_url, remote_url]:
+            clean_candidate = normalize_base_url(candidate)
+            if clean_candidate and clean_candidate not in credential_urls:
+                credential_urls.append(clean_candidate)
+        if not credential_urls:
+            raise ServiceError("Cannot configure credentials because the portal TFS URL is empty.")
+
+        _set_git_credential_store_helper()
+        for credential_url in credential_urls:
+            _approve_git_credential(credential_url, username=clean_username, password=clean_token)
+
+        credential_preflight = _check_git_credentials_for_portal(portal)
+        remote_validation = _validate_git_remote_access(workspace_path)
+        ok = bool(credential_preflight.get("ok")) and bool(remote_validation.get("ok"))
+        if ok:
+            message = "TFS Git credentials were saved and validated for this devcontainer."
+        else:
+            message = (
+                "TFS Git credentials were saved, but validation still needs attention. "
+                f"{credential_preflight.get('message') or ''} {remote_validation.get('message') or ''}"
+            ).strip()
+        self._invalidate_portal_runtime_cache(portal["repository"])
+        return {
+            "status": "ok" if ok else "warning",
+            "ok": ok,
+            "message": message,
+            "credential_preflight": credential_preflight,
+            "remote_validation": remote_validation,
+            "credential_urls_count": len(credential_urls),
+            "credential_store_path": str(_git_credential_store_path()),
+        }
+
     def get_settings_context(self, portal_name: str = "") -> Dict[str, Any]:
         config = load_app_config()
         runtime_settings = load_runtime_settings()
@@ -1377,12 +1677,17 @@ class AutomationService:
             config=config,
             runtime_settings=runtime_settings,
         )
+        workspace_options = self.discover_target_workspaces(
+            portal=portal,
+            runtime_settings=runtime_settings,
+        )
         return {
             "config": config,
             "portal_names": portal_names,
             "portal": portal,
             "selected_portal": portal["repository"],
             "runtime_settings": runtime_settings,
+            "workspace_options": workspace_options,
             "has_pat": bool(_PORTAL_PATS.get(portal["repository"])),
             "auth_options": AUTH_OPTIONS,
             "copilot_permission_level_options": COPILOT_PERMISSION_LEVEL_OPTIONS,
@@ -1639,7 +1944,7 @@ class AutomationService:
             "copilot_status": copilot_status,
             "copilot_error": copilot_error,
             "copilot_context_path": str((state or {}).get("copilot_context_path") or ""),
-            "copilot_workspace_path": str((state or {}).get("copilot_workspace_path") or portal.get("copilot_workspace_path") or ""),
+            "copilot_workspace_path": str(portal.get("copilot_workspace_path") or (state or {}).get("copilot_workspace_path") or ""),
             "copilot_agent_name": str((state or {}).get("copilot_agent_name") or runtime_settings.get("copilot_agent_name") or ""),
             "copilot_provider_log_path": str((state or {}).get("copilot_provider_log_path") or ""),
             "copilot_process_id": str((state or {}).get("copilot_process_id") or ""),
@@ -2061,6 +2366,10 @@ class AutomationService:
             active_portal_name = config["DEFAULT_PORTAL"]
         portal = get_portal_config(config, active_portal_name)
         dashboard_started_at = time.perf_counter()
+        workspace_options = self.discover_target_workspaces(
+            portal=portal,
+            runtime_settings=runtime_settings,
+        )
 
         auth_message = ""
         current_iteration = None
@@ -2196,6 +2505,7 @@ class AutomationService:
             "portal_names": portal_names,
             "portal": portal,
             "selected_portal": portal["repository"],
+            "workspace_options": workspace_options,
             "selected_iteration": selected_iteration,
             "current_iteration": current_iteration,
             "work_item_project": portal["work_item_project"],
@@ -2714,6 +3024,27 @@ class AutomationService:
         except ValueError as exc:
             raise ServiceError(str(exc)) from exc
 
+    def save_portal_workspace(
+        self,
+        *,
+        portal_name: str,
+        copilot_workspace_path: str,
+    ) -> Dict[str, Any]:
+        workspace_path = str(copilot_workspace_path or "").strip()
+        if not workspace_path:
+            raise ServiceError("Select or enter a target workspace path before saving.")
+        try:
+            config = load_app_config()
+            portal = get_portal_config(config, portal_name or config["DEFAULT_PORTAL"])
+            payload = dict(portal)
+            payload["copilot_workspace_path"] = workspace_path
+            saved = save_portal_config(config, portal["repository"], payload)
+            self._invalidate_portal_runtime_cache(portal["repository"])
+            self._invalidate_portal_runtime_cache(saved["repository"])
+            return saved
+        except ValueError as exc:
+            raise ServiceError(str(exc)) from exc
+
     def start_rerun_automatic_flow(
         self,
         *,
@@ -2908,94 +3239,27 @@ class AutomationService:
                     continue
 
             try:
-                copilot_status = str(item.get("copilot_status") or "").strip().lower()
-                agent_result_status = str(item.get("agent_result_status") or "").strip().lower()
-                push_status = str(item.get("push_status") or "").strip().lower()
-                waiting_for_existing_provider = (
-                    copilot_status in {"launched", "prepared"}
-                    and agent_result_status in {"", "waiting"}
-                    and bool(item.get("agent_result_path"))
+                self._schedule_auto_completion(
+                    portal_name=portal_name,
+                    work_item_id=work_item_id,
+                    iteration_path=iteration_path,
+                    triage_status=triage_status,
+                    selected_base_branch=selected_base_branch,
+                    work_type=selected_work_type,
+                    planned_branch_name=str(plan.get("branch_name") or item.get("branch_name") or ""),
                 )
-                if provider_requires_process and waiting_for_existing_provider and not str(item.get("copilot_process_id") or "").strip():
-                    waiting_for_existing_provider = False
-                if runtime_provider == "vscode" and waiting_for_existing_provider:
-                    with execution_runtime_scope(execution_runtime):
-                        result_file = inspect_agent_result_file(
-                            str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
-                            str(item.get("agent_result_path") or ""),
-                        )
-                    launch_age_seconds = _age_seconds_from_iso_timestamp(item.get("copilot_prepared_at"))
-                    if (
-                        not bool(result_file.get("exists"))
-                        and launch_age_seconds >= VSCODE_STALE_WAIT_RELAUNCH_SECONDS
-                    ):
-                        waiting_for_existing_provider = False
-                failed_cli_provider_without_result = False
-                if provider_requires_process and agent_result_status == "error" and bool(item.get("agent_result_path")):
-                    with execution_runtime_scope(execution_runtime):
-                        result_file = inspect_agent_result_file(
-                            str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
-                            str(item.get("agent_result_path") or ""),
-                        )
-                    failed_cli_provider_without_result = not bool(result_file.get("exists"))
-                repairable_agent_result = (
-                    agent_result_status in {"needs_agent_fix", "blocked", "invalid", "error", "completed"}
-                    and bool(item.get("agent_result_path"))
-                    and bool(item.get("branch_name"))
-                    and not failed_cli_provider_without_result
-                    and int(item.get("agent_repair_count") or 0) < MAX_AUTOMATIC_AGENT_REPAIR_ATTEMPTS
+                workspace_path = str(item.get("copilot_workspace_path") or "").strip()
+                workspace_detail = f" for workspace {workspace_path}" if workspace_path else ""
+                results.append(
+                    {
+                        "work_item_id": work_item_id,
+                        "status": "queued",
+                        "detail": (
+                            f"{branch_detail} Queued automatic flow{workspace_detail}. "
+                            "The runner serializes work items that share the same target repository clone."
+                        ).strip(),
+                    }
                 )
-                should_continue = (
-                    push_status == "pushed"
-                    or agent_result_status in {"green_light", "ready_for_push", "success"}
-                    or waiting_for_existing_provider
-                    or repairable_agent_result
-                )
-
-                if should_continue:
-                    continuation = self.continue_automatic_flow_for_item(
-                        portal_name=portal_name,
-                        work_item_id=work_item_id,
-                        iteration_path=iteration_path,
-                        triage_status=triage_status,
-                        selected_base_branch=selected_base_branch,
-                        work_type=selected_work_type,
-                        planned_branch_name=str(plan.get("branch_name") or item.get("branch_name") or ""),
-                    )
-                    if continuation["status"] == "waiting-for-agent":
-                        self._schedule_auto_completion(
-                            portal_name=portal_name,
-                            work_item_id=work_item_id,
-                            iteration_path=iteration_path,
-                            triage_status=triage_status,
-                            selected_base_branch=selected_base_branch,
-                            work_type=selected_work_type,
-                            planned_branch_name=str(plan.get("branch_name") or item.get("branch_name") or ""),
-                        )
-                    results.append(
-                        {
-                            "work_item_id": work_item_id,
-                            "status": continuation["status"],
-                            "detail": f"{branch_detail} {continuation['detail']}".strip(),
-                        }
-                    )
-                else:
-                    launch_result = self.launch_copilot_session(
-                        portal_name=portal_name,
-                        work_item_id=work_item_id,
-                        iteration_path=iteration_path,
-                        triage_status=triage_status,
-                        selected_base_branch=selected_base_branch,
-                        work_type=selected_work_type,
-                        planned_branch_name=str(plan.get("branch_name") or item.get("branch_name") or ""),
-                    )
-                    results.append(
-                        {
-                            "work_item_id": work_item_id,
-                            "status": "agent-running",
-                            "detail": f"{branch_detail} Agent launched on {launch_result['branch_name']}. Waiting for green-light result.",
-                        }
-                    )
             except Exception as exc:
                 mark_auto_flow_enabled(
                     portal=portal_name,
@@ -3014,6 +3278,7 @@ class AutomationService:
             "completed": sum(1 for result in results if result["status"] == "completed"),
             "already_has_pr": sum(1 for result in results if result["status"] == "already-has-pr"),
             "needs_plan": sum(1 for result in results if result["status"] == "needs-plan"),
+            "queued": sum(1 for result in results if result["status"] == "queued"),
             "agent_running": sum(1 for result in results if result["status"] in {"agent-running", "waiting-for-agent"}),
             "errors": sum(1 for result in results if result["status"] in {"error", "branch-error", "automation-error", "agent-error"}),
         }
@@ -3356,11 +3621,7 @@ class AutomationService:
     ) -> str:
         change_summary = self._resolve_draft_pr_summary(portal, current_item)
         final_report = self._resolve_final_report_text(current_item)
-        footer_lines = [""]
-        final_report_path = str(current_item.get("final_report_path") or "").strip()
-        if final_report_path:
-            footer_lines.append(f"Full final report: {final_report_path}")
-        footer_lines.append(f"Work item link: {plan['url']}")
+        footer_lines = ["", f"Work item link: {plan['url']}"]
         footer = "\n".join(footer_lines)
 
         report_sections: Dict[str, str] = {}
@@ -4354,31 +4615,76 @@ class AutomationService:
         work_type: str,
         planned_branch_name: str,
     ) -> None:
-        deadline = time.monotonic() + AGENT_RESULT_POLL_TIMEOUT_SECONDS
         try:
-            while time.monotonic() < deadline:
-                try:
-                    result = self.continue_automatic_flow_for_item(
-                        portal_name=portal_name,
-                        work_item_id=work_item_id,
-                        iteration_path=iteration_path,
-                        triage_status=triage_status,
-                        selected_base_branch=selected_base_branch,
-                        work_type=work_type,
-                        planned_branch_name=planned_branch_name,
-                    )
-                    if result["status"] != "waiting-for-agent":
+            portal, _ = self._get_action_item(portal_name, work_item_id)
+            workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
+            workspace_lock = _get_workspace_lock(workspace_path)
+            with workspace_lock:
+                deadline = time.monotonic() + AGENT_RESULT_POLL_TIMEOUT_SECONDS
+                while time.monotonic() < deadline:
+                    try:
+                        _, current_item = self._get_action_item(portal_name, work_item_id)
+                        if current_item.get("has_pr"):
+                            return
+
+                        copilot_status = str(current_item.get("copilot_status") or "").strip().lower()
+                        agent_result_status = str(current_item.get("agent_result_status") or "").strip().lower()
+                        push_status = str(current_item.get("push_status") or "").strip().lower()
+                        result_path = str(current_item.get("agent_result_path") or "").strip()
+                        branch_name = str(
+                            current_item.get("effective_branch_name")
+                            or current_item.get("branch_name")
+                            or planned_branch_name
+                            or ""
+                        ).strip()
+                        provider_is_waiting = (
+                            copilot_status in {"launched", "prepared"}
+                            and agent_result_status in {"", "waiting"}
+                            and bool(result_path)
+                        )
+                        has_result_to_continue = (
+                            bool(result_path)
+                            and agent_result_status
+                            and agent_result_status not in {"", "error"}
+                        )
+                        needs_agent_launch = (
+                            push_status != "pushed"
+                            and not provider_is_waiting
+                            and not has_result_to_continue
+                        )
+
+                        if needs_agent_launch:
+                            self.launch_copilot_session(
+                                portal_name=portal_name,
+                                work_item_id=work_item_id,
+                                iteration_path=iteration_path,
+                                triage_status=triage_status,
+                                selected_base_branch=selected_base_branch,
+                                work_type=work_type,
+                                planned_branch_name=branch_name,
+                            )
+
+                        result = self.continue_automatic_flow_for_item(
+                            portal_name=portal_name,
+                            work_item_id=work_item_id,
+                            iteration_path=iteration_path,
+                            triage_status=triage_status,
+                            selected_base_branch=selected_base_branch,
+                            work_type=work_type,
+                            planned_branch_name=branch_name,
+                        )
+                        if result["status"] != "waiting-for-agent":
+                            return
+                    except Exception as exc:
+                        mark_agent_result(
+                            portal=portal_name,
+                            work_item_id=work_item_id,
+                            agent_result_status="error",
+                            agent_result_error=str(exc),
+                        )
+                        mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
                         return
-                except Exception as exc:
-                    mark_agent_result(
-                        portal=portal_name,
-                        work_item_id=work_item_id,
-                        agent_result_status="error",
-                        agent_result_error=str(exc),
-                    )
-                    mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
-                    return
-                time.sleep(AGENT_RESULT_POLL_INTERVAL_SECONDS)
+                    time.sleep(AGENT_RESULT_POLL_INTERVAL_SECONDS)
             mark_agent_result(
                 portal=portal_name,
                 work_item_id=work_item_id,

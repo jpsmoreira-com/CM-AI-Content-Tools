@@ -85,6 +85,41 @@
         </p>
         {% endif %}
     </form>
+    <form method="post" action="/settings/portal/workspace" class="panel workspace-switch-panel">
+        <input type="hidden" name="portal" value="{{ selected_portal }}">
+        <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+        <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+        <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+        <div class="workspace-switch-grid">
+            <div class="workspace-copy">
+                <span class="label">Target Workspace</span>
+                <strong>{{ portal.copilot_workspace_path or "No workspace configured" }}</strong>
+                <p>Automation actions run against this local repository clone.</p>
+            </div>
+            <label>
+                <span>Switch Workspace</span>
+                {% if workspace_options %}
+                <select name="copilot_workspace_path">
+                    {% for option in workspace_options %}
+                    <option value="{{ option.path }}" {% if option.is_current %}selected{% endif %}>
+                        {{ option.label }}{% if option.is_git %}{% else %} - not a Git workspace{% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+                {% else %}
+                <input
+                    type="text"
+                    name="copilot_workspace_path"
+                    value="{{ portal.copilot_workspace_path }}"
+                    placeholder="/workspaces/DocumentationPortal-#01"
+                >
+                {% endif %}
+            </label>
+            <div class="actions single-action">
+                <button type="submit" class="secondary-button">Use Workspace</button>
+            </div>
+        </div>
+    </form>
 </section>
 
 {% if message %}
