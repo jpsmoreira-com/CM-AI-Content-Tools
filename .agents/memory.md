@@ -879,3 +879,10 @@ Next recommended tasks:
 - The dashboard credential preflight now restores `CONTENT_AI_SETTINGS_PATH/git-credentials` back to `~/.git-credentials` before calling `git credential fill`.
 - The devcontainer bootstrap now restores the same persisted credential store before clone/pull and forces the global Git credential helper to `store` to avoid interactive helper timeouts.
 - Secrets remain outside the project repository and outside `.env`; they live only in the local non-Git settings folder under `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.
+
+2026-07-02 Git push Docker credential fallback:
+
+- WI 152491 reached agent `green_light`, created the final report, and committed locally, but failed during push because the repository `pre-push` hook runs markdownlint through Docker.
+- The failing hook command used `proxy.criticalmanufacturing.io/davidanson/markdownlint-cli2:v0.12.1`; Docker failed before linting with `error getting credentials` because the devcontainer Docker config pointed to a broken credential helper.
+- Confirmed that the same image can be pulled with an isolated empty `DOCKER_CONFIG`, and that the repository hook then passes markdownlint successfully.
+- Added a push retry path: when `git push` fails with Docker credential-helper output, the automation retries the same push with a temporary isolated `DOCKER_CONFIG`. This keeps repository hooks enabled while avoiding stale devcontainer Docker credential stores.

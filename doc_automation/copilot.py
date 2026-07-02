@@ -1949,10 +1949,10 @@ def commit_and_push_agent_changes(
             f"git -C {_shell_quote(workspace_path)} rev-parse HEAD",
         )
         commit_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else ""
-        push_result = _run_wsl_script(
-            distro,
-            f"git -C {_shell_quote(workspace_path)} push -u origin {_shell_quote(branch_name)}",
-            timeout_seconds=600,
+        push_result = _run_git_push_with_docker_config_fallback(
+            distro=distro,
+            workspace_path=workspace_path,
+            branch_name=branch_name,
         )
         if push_result.returncode != 0:
             raise CopilotIntegrationError(push_result.stderr.strip() or push_result.stdout.strip() or "Failed to push the work branch.")
@@ -2000,10 +2000,10 @@ def commit_and_push_agent_changes(
     )
     commit_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else ""
 
-    push_result = _run_wsl_script(
-        distro,
-        f"git -C {_shell_quote(workspace_path)} push -u origin {_shell_quote(branch_name)}",
-        timeout_seconds=600,
+    push_result = _run_git_push_with_docker_config_fallback(
+        distro=distro,
+        workspace_path=workspace_path,
+        branch_name=branch_name,
     )
     if push_result.returncode != 0:
         raise CopilotIntegrationError(push_result.stderr.strip() or push_result.stdout.strip() or "Failed to push the work branch.")
@@ -2015,6 +2015,38 @@ def commit_and_push_agent_changes(
         "stdout": push_result.stdout.strip(),
         "stderr": push_result.stderr.strip(),
     }
+
+
+def _git_push_failed_on_docker_credentials(result: subprocess.CompletedProcess[str]) -> bool:
+    output = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+    return "docker" in output and "error getting credentials" in output
+
+
+def _run_git_push_with_docker_config_fallback(
+    *,
+    distro: str,
+    workspace_path: str,
+    branch_name: str,
+) -> subprocess.CompletedProcess[str]:
+    push_script = f"git -C {_shell_quote(workspace_path)} push -u origin {_shell_quote(branch_name)}"
+    push_result = _run_wsl_script(distro, push_script, timeout_seconds=600)
+    if push_result.returncode == 0 or not _git_push_failed_on_docker_credentials(push_result):
+        return push_result
+
+    fallback_script = " && ".join(
+        [
+            "fallback_docker_config=$(mktemp -d)",
+            'trap \'rm -rf "$fallback_docker_config"\' EXIT',
+            f"DOCKER_CONFIG=\"$fallback_docker_config\" {push_script}",
+        ]
+    )
+    fallback_result = _run_wsl_script(distro, fallback_script, timeout_seconds=900)
+    if fallback_result.returncode == 0:
+        fallback_result.stdout = (
+            "Retried git push with an isolated DOCKER_CONFIG after the default Docker credential helper failed.\n"
+            + (fallback_result.stdout or "")
+        )
+    return fallback_result
 
 
 def prepare_cm_gpt_handoff(
