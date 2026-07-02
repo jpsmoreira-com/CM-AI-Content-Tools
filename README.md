@@ -219,14 +219,14 @@ For Git Credentials authentication inside a devcontainer, provide one of these o
 - `CONTENT_AI_TFS_HOST`, when the TFS host is different from `tfs-product.cmf.criticalmanufacturing.com`.
 - `CONTENT_AI_TFS_VERIFY_SSL`, when the devcontainer should override the default internal setting for TFS SSL verification;
 - `CONTENT_AI_TFS_CA_BUNDLE_PATH`, when the devcontainer has a mounted corporate CA bundle that Python `requests` should trust.
-- `CONTENT_AI_SETTINGS_PATH`, when the devcontainer should persist `.env` and `config/tfs_dashboard.local.json` somewhere other than `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.
+- `CONTENT_AI_SETTINGS_PATH`, when the devcontainer should persist `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror somewhere other than `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.
 
-If those inputs are not configured, open `Settings > Connection` after the dashboard starts and use `TFS Git Credentials Setup`. That setup writes the provided username and token/password through `git credential approve` into the devcontainer user's Git credential store, then validates both dashboard credential lookup and `git ls-remote --heads origin`. Host Windows/GCM credentials are not assumed to be available inside Linux containers.
+If those inputs are not configured, open `Settings > Connection` after the dashboard starts and use `TFS Git Credentials Setup`. That setup writes the provided username and token/password through `git credential approve` into the devcontainer user's Git credential store, mirrors the store to `CONTENT_AI_SETTINGS_PATH/git-credentials`, then validates both dashboard credential lookup and `git ls-remote --heads origin`. Host Windows/GCM credentials are not assumed to be available inside Linux containers.
 
 The bootstrap:
 
 - clones or updates the centralized `CM-AI-Content-Skills` checkout;
-- validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
+- restores `CONTENT_AI_SETTINGS_PATH/git-credentials` into the devcontainer user's `~/.git-credentials` when available, then validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
 - writes TFS SSL runtime defaults for the devcontainer. Internal devcontainers default to `DOC_AUTOMATION_TFS_VERIFY_SSL=false` unless `CONTENT_AI_TFS_VERIFY_SSL` is provided;
 - installs Codex CLI into the devcontainer user's npm prefix when `TFS_AUTONOMOUS_INSTALL_CODEX_CLI=true` and the executable is missing;
 - installs the pipeline requirements into `~/.venvs/tfs-doc-automation-mvp`;

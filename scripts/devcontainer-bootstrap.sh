@@ -16,6 +16,51 @@ export CODEX_HOME
 export NPM_CONFIG_PREFIX
 export PATH="$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"
 
+ensure_settings_path() {
+  if ! mkdir -p "$CONTENT_AI_SETTINGS_PATH" 2>/dev/null; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo mkdir -p "$CONTENT_AI_SETTINGS_PATH"
+      sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_SETTINGS_PATH"
+    else
+      echo "Could not create CONTENT_AI_SETTINGS_PATH: $CONTENT_AI_SETTINGS_PATH" >&2
+      exit 1
+    fi
+  fi
+  if [ ! -w "$CONTENT_AI_SETTINGS_PATH" ] && command -v sudo >/dev/null 2>&1; then
+    sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_SETTINGS_PATH"
+  fi
+}
+
+set_git_store_helper() {
+  if ! command -v git >/dev/null 2>&1; then
+    return 0
+  fi
+  git config --global --unset-all credential.helper >/dev/null 2>&1 || true
+  git config --global credential.helper store
+  git config --global credential.useHttpPath true
+}
+
+restore_persisted_git_credentials() {
+  persisted_credentials_path="$CONTENT_AI_SETTINGS_PATH/git-credentials"
+  if [ ! -f "$persisted_credentials_path" ]; then
+    return 0
+  fi
+  cp "$persisted_credentials_path" "$HOME/.git-credentials"
+  chmod 600 "$HOME/.git-credentials" || true
+  set_git_store_helper
+  echo "Restored persisted TFS Git credentials from CONTENT_AI_SETTINGS_PATH."
+}
+
+mirror_git_credentials_to_settings() {
+  credential_path="$HOME/.git-credentials"
+  if [ ! -f "$credential_path" ]; then
+    return 0
+  fi
+  ensure_settings_path
+  cp "$credential_path" "$CONTENT_AI_SETTINGS_PATH/git-credentials"
+  chmod 600 "$CONTENT_AI_SETTINGS_PATH/git-credentials" || true
+}
+
 infer_target_repository() {
   if [ -n "${CONTENT_AI_TARGET_REPOSITORY:-}" ]; then
     printf "%s" "$CONTENT_AI_TARGET_REPOSITORY"
@@ -34,6 +79,7 @@ infer_target_repository() {
 }
 
 git_credentials_are_available() {
+  set_git_store_helper
   credential_output="$(printf "url=https://%s/\n\n" "$CONTENT_AI_TFS_HOST" | git credential fill 2>/dev/null || true)"
   printf "%s\n" "$credential_output" | grep -q '^password='
 }
@@ -52,7 +98,8 @@ configure_tfs_git_credentials() {
     if [ -f "$CONTENT_AI_HOST_GIT_CREDENTIALS_PATH" ]; then
       cp "$CONTENT_AI_HOST_GIT_CREDENTIALS_PATH" "$HOME/.git-credentials"
       chmod 600 "$HOME/.git-credentials" || true
-      git config --global credential.helper store
+      set_git_store_helper
+      mirror_git_credentials_to_settings
       echo "Copied Git credentials from CONTENT_AI_HOST_GIT_CREDENTIALS_PATH."
     else
       echo "Configured CONTENT_AI_HOST_GIT_CREDENTIALS_PATH was not found: $CONTENT_AI_HOST_GIT_CREDENTIALS_PATH" >&2
@@ -86,7 +133,8 @@ retained.append(f"https://{quote(username, safe='')}:{quote(password, safe='')}@
 credential_path.write_text("\n".join(retained).rstrip() + "\n", encoding="utf-8")
 credential_path.chmod(0o600)
 PY
-    git config --global credential.helper store
+    set_git_store_helper
+    mirror_git_credentials_to_settings
     echo "Configured TFS Git credentials from CONTENT_AI_TFS_GIT_USERNAME and token environment variables."
   else
     echo "TFS Git credentials are not available in this devcontainer yet." >&2
@@ -132,21 +180,10 @@ ensure_codex_cli() {
   npm install -g @openai/codex
 }
 
+ensure_settings_path
+restore_persisted_git_credentials
 configure_tfs_git_credentials
 ensure_codex_cli
-
-if ! mkdir -p "$CONTENT_AI_SETTINGS_PATH" 2>/dev/null; then
-  if command -v sudo >/dev/null 2>&1; then
-    sudo mkdir -p "$CONTENT_AI_SETTINGS_PATH"
-    sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_SETTINGS_PATH"
-  else
-    echo "Could not create CONTENT_AI_SETTINGS_PATH: $CONTENT_AI_SETTINGS_PATH" >&2
-    exit 1
-  fi
-fi
-if [ ! -w "$CONTENT_AI_SETTINGS_PATH" ] && command -v sudo >/dev/null 2>&1; then
-  sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_SETTINGS_PATH"
-fi
 
 if [ ! -d "$CONTENT_AI_REPO_PATH/.git" ]; then
   if [ -z "$CONTENT_AI_REPO_URL" ]; then

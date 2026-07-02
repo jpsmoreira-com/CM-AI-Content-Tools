@@ -870,3 +870,12 @@ Next recommended tasks:
 - Added a per-workspace runner lock. The automatic worker holds the lock for the whole lifecycle of one WI on that clone: launch, wait for agent result, validation, push, and draft PR creation. Other WIs targeting the same workspace remain active but wait their turn.
 - Updated the dashboard bulk summary to report queued items separately from items already waiting for agent output.
 - Recovered the affected WI 152535 by moving the generated `perform_setup.md` change from the WI 152523 branch onto the WI 152535 branch, then continuing the pipeline. WI 152523 created PR 89068 and WI 152535 created PR 89085.
+
+2026-07-02 Persistent TFS Git credentials:
+
+- A dashboard restart/rebuild test showed that the user had to re-enter TFS Git credentials and WI execution still failed with `Git credential lookup timed out after 10s`.
+- Root cause: `.env` and `config/tfs_dashboard.local.json` were persisted through `CONTENT_AI_SETTINGS_PATH`, but the Git credential store was only written to the ephemeral devcontainer home at `/home/vscode/.git-credentials`.
+- Added persistence for the Git credential store: `Settings > Connection > TFS Git Credentials Setup` now mirrors `~/.git-credentials` to `CONTENT_AI_SETTINGS_PATH/git-credentials`.
+- The dashboard credential preflight now restores `CONTENT_AI_SETTINGS_PATH/git-credentials` back to `~/.git-credentials` before calling `git credential fill`.
+- The devcontainer bootstrap now restores the same persisted credential store before clone/pull and forces the global Git credential helper to `store` to avoid interactive helper timeouts.
+- Secrets remain outside the project repository and outside `.env`; they live only in the local non-Git settings folder under `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.

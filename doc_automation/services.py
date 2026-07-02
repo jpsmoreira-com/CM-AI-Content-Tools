@@ -48,6 +48,7 @@ from .config import (
     COPILOT_VSCODE_WINDOW_MODE_OPTIONS,
     DATA_DIR,
     EXECUTION_RUNTIME_OPTIONS,
+    get_persisted_settings_file,
     get_portal_config,
     get_portal_names,
     load_app_config,
@@ -102,6 +103,7 @@ GIT_CREDENTIAL_SOURCE_ENV = "CONTENT_AI_HOST_GIT_CREDENTIALS_PATH"
 TFS_GIT_USERNAME_ENV = "CONTENT_AI_TFS_GIT_USERNAME"
 TFS_GIT_PASSWORD_ENV = "CONTENT_AI_TFS_GIT_PASSWORD"
 TFS_GIT_TOKEN_ENV = "CONTENT_AI_TFS_GIT_TOKEN"
+PERSISTED_GIT_CREDENTIALS_FILENAME = "git-credentials"
 TFS_PULL_REQUEST_DESCRIPTION_LIMIT = 3900
 DEFAULT_RATIONALE_TEXT = (
     "The changes align the documentation with the work item requirements and captured implementation evidence."
@@ -203,6 +205,85 @@ def _git_credential_store_path() -> Path:
     return Path.home() / ".git-credentials"
 
 
+def _persisted_git_credential_store_path() -> Optional[Path]:
+    return get_persisted_settings_file(PERSISTED_GIT_CREDENTIALS_FILENAME)
+
+
+def _secure_credential_file(path: Path) -> None:
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _credential_file_has_host(path: Path, host: str) -> bool:
+    if not path.exists() or not host:
+        return False
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    return any(_credential_line_matches_host(line, host) for line in lines)
+
+
+def _copy_git_credential_store(source_path: Path, target_path: Path) -> None:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source_path, target_path)
+    _secure_credential_file(target_path)
+
+
+def _restore_persisted_git_credentials(host: str = "") -> Dict[str, Any]:
+    persisted_path = _persisted_git_credential_store_path()
+    credential_path = _git_credential_store_path()
+    if not persisted_path or not persisted_path.exists():
+        return {
+            "status": "skipped",
+            "ok": False,
+            "message": "No persisted Git credential store is available.",
+        }
+    if host and _credential_file_has_host(credential_path, host):
+        _set_git_credential_store_helper()
+        return {
+            "status": "skipped",
+            "ok": True,
+            "message": f"Git credentials for {host} are already available in the local credential store.",
+            "path": str(credential_path),
+        }
+    _copy_git_credential_store(persisted_path, credential_path)
+    _set_git_credential_store_helper()
+    return {
+        "status": "restored",
+        "ok": True,
+        "message": f"Restored persisted Git credentials into {credential_path}.",
+        "path": str(credential_path),
+        "persisted_path": str(persisted_path),
+    }
+
+
+def _mirror_git_credentials_to_persisted_store() -> Dict[str, Any]:
+    persisted_path = _persisted_git_credential_store_path()
+    credential_path = _git_credential_store_path()
+    if not persisted_path:
+        return {
+            "status": "skipped",
+            "ok": False,
+            "message": "CONTENT_AI_SETTINGS_PATH is not configured, so Git credentials were not mirrored.",
+        }
+    if not credential_path.exists():
+        return {
+            "status": "skipped",
+            "ok": False,
+            "message": f"Git credential store does not exist at {credential_path}.",
+        }
+    _copy_git_credential_store(credential_path, persisted_path)
+    return {
+        "status": "mirrored",
+        "ok": True,
+        "message": f"Mirrored Git credentials to {persisted_path}.",
+        "persisted_path": str(persisted_path),
+    }
+
+
 def _path_exists_as_git_workspace(path_value: str) -> bool:
     clean_path = str(path_value or "").strip()
     if not clean_path:
@@ -257,6 +338,12 @@ def _set_git_credential_store_helper() -> None:
         return
     try:
         subprocess.run(
+            [git, "config", "--global", "--unset-all", "credential.helper"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        subprocess.run(
             [git, "config", "--global", "credential.helper", "store"],
             capture_output=True,
             text=True,
@@ -305,15 +392,13 @@ def _write_git_store_credential(base_url: str, *, username: str, password: str) 
     )
     retained_lines.append(credential_url)
     credential_path.write_text("\n".join(retained_lines).rstrip() + "\n", encoding="utf-8")
-    try:
-        credential_path.chmod(0o600)
-    except OSError:
-        pass
+    _secure_credential_file(credential_path)
     _set_git_credential_store_helper()
+    _mirror_git_credentials_to_persisted_store()
     return {
         "status": "repaired",
         "ok": True,
-        "message": f"Stored Git credentials for {host} in {credential_path}.",
+        "message": f"Stored Git credentials for {host} in {credential_path} and mirrored them to the persistent settings folder when configured.",
         "source": "environment",
     }
 
@@ -404,15 +489,13 @@ def _copy_git_store_credentials(source_path: str) -> Dict[str, Any]:
     if expanded_source.resolve() != credential_path.resolve():
         credential_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(expanded_source, credential_path)
-    try:
-        credential_path.chmod(0o600)
-    except OSError:
-        pass
+    _secure_credential_file(credential_path)
     _set_git_credential_store_helper()
+    _mirror_git_credentials_to_persisted_store()
     return {
         "status": "repaired",
         "ok": True,
-        "message": f"Copied Git credentials from {expanded_source} to {credential_path}.",
+        "message": f"Copied Git credentials from {expanded_source} to {credential_path} and mirrored them to the persistent settings folder when configured.",
         "source": str(expanded_source),
     }
 
@@ -506,7 +589,10 @@ def _check_git_credentials_for_portal(portal: Dict[str, Any]) -> Dict[str, Any]:
 
     base_url = normalize_base_url(str(portal.get("base_url") or ""))
     try:
+        _restore_persisted_git_credentials(host)
+        _set_git_credential_store_helper()
         credentials = git_credential_values(base_url, timeout_seconds=10)
+        _mirror_git_credentials_to_persisted_store()
         return {
             "status": "ok",
             "ok": True,
@@ -1639,6 +1725,7 @@ class AutomationService:
         _set_git_credential_store_helper()
         for credential_url in credential_urls:
             _approve_git_credential(credential_url, username=clean_username, password=clean_token)
+        persistent_store = _mirror_git_credentials_to_persisted_store()
 
         credential_preflight = _check_git_credentials_for_portal(portal)
         remote_validation = _validate_git_remote_access(workspace_path)
@@ -1659,6 +1746,7 @@ class AutomationService:
             "remote_validation": remote_validation,
             "credential_urls_count": len(credential_urls),
             "credential_store_path": str(_git_credential_store_path()),
+            "persistent_credential_store_path": persistent_store.get("persisted_path", ""),
         }
 
     def get_settings_context(self, portal_name: str = "") -> Dict[str, Any]:
