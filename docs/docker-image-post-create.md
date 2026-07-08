@@ -38,6 +38,8 @@ The Docker image should include:
 - `content-ai-post-create` installed on `PATH`, pointing to `projects/tfs-doc-automation-mvp/scripts/content-ai-post-create.sh`.
 - Recommended VS Code extensions declared in `devcontainer.json`, not installed from the post-create script.
 
+If the image build uses `nvm` to install Node.js, do not run `nvm install` or `nvm use` while `NPM_CONFIG_PREFIX` is set. `nvm` rejects that environment variable during Node selection. Set the npm global prefix only after Node is installed and active.
+
 Do not bake secrets into the image. TFS Git credentials, PATs, Codex auth, and provider tokens must be supplied by mounted persistent user state or configured from the dashboard.
 
 ## Example Dockerfile Fragment
