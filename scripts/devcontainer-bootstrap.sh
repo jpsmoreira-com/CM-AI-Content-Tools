@@ -6,6 +6,7 @@ CONTENT_AI_REPO_PATH="${CONTENT_AI_REPO_PATH:-/workspaces/CM-AI-Content-Skills}"
 CONTENT_AI_REPO_URL="${CONTENT_AI_REPO_URL:-}"
 CONTENT_AI_BRANCH="${CONTENT_AI_BRANCH:-main}"
 CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturing.com}"
+CONTENT_AI_AUTO_STASH_ON_UPDATE="${CONTENT_AI_AUTO_STASH_ON_UPDATE:-true}"
 PIPELINE_PROJECT_PATH="$CONTENT_AI_REPO_PATH/projects/tfs-doc-automation-mvp"
 PIPELINE_VENV="${TFS_AUTONOMOUS_PIPELINE_VENV:-$HOME/.venvs/tfs-doc-automation-mvp}"
 PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7000}"
@@ -154,11 +155,15 @@ ensure_node_runtime() {
     return 0
   fi
   if [ -s "/usr/local/share/nvm/nvm.sh" ]; then
+    local saved_npm_config_prefix
+    saved_npm_config_prefix="${NPM_CONFIG_PREFIX:-}"
+    unset NPM_CONFIG_PREFIX
     # shellcheck disable=SC1091
     . "/usr/local/share/nvm/nvm.sh"
     nvm install --lts
     nvm alias default 'lts/*' >/dev/null 2>&1 || true
     nvm use --lts >/dev/null
+    export NPM_CONFIG_PREFIX="$saved_npm_config_prefix"
   fi
 }
 
@@ -180,26 +185,68 @@ ensure_codex_cli() {
   npm install -g @openai/codex
 }
 
+content_ai_worktree_dirty() {
+  [ -n "$(git -C "$CONTENT_AI_REPO_PATH" status --porcelain --untracked-files=all)" ]
+}
+
+backup_content_ai_changes() {
+  local timestamp backup_dir
+  timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
+  backup_dir="$CONTENT_AI_SETTINGS_PATH/backups"
+  mkdir -p "$backup_dir"
+  git -C "$CONTENT_AI_REPO_PATH" status --short --untracked-files=all > "$backup_dir/content-ai-pre-update-status-$timestamp.txt" || true
+  git -C "$CONTENT_AI_REPO_PATH" diff > "$backup_dir/content-ai-pre-update-worktree-$timestamp.patch" || true
+  git -C "$CONTENT_AI_REPO_PATH" diff --cached > "$backup_dir/content-ai-pre-update-index-$timestamp.patch" || true
+  echo "Saved Content AI local-change backup metadata to $backup_dir."
+}
+
+stash_content_ai_changes_for_update() {
+  if ! content_ai_worktree_dirty; then
+    return 0
+  fi
+
+  echo "Content AI runtime copy has local changes at $CONTENT_AI_REPO_PATH."
+  if [ "$CONTENT_AI_AUTO_STASH_ON_UPDATE" != "true" ]; then
+    git -C "$CONTENT_AI_REPO_PATH" status --short --untracked-files=all >&2 || true
+    echo "Automatic update is paused to avoid overwriting local changes." >&2
+    echo "Run 'tfs-autonomous-pipeline sync-project' after reviewing the changes, or set CONTENT_AI_AUTO_STASH_ON_UPDATE=true to let the runtime copy auto-stash before updating." >&2
+    exit 1
+  fi
+
+  backup_content_ai_changes
+  local timestamp
+  timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
+  git -C "$CONTENT_AI_REPO_PATH" stash push -u -m "content-ai auto-stash before update $timestamp"
+  echo "Local Content AI runtime changes were stashed before updating. Use 'git -C $CONTENT_AI_REPO_PATH stash list' to inspect them if needed."
+}
+
+sync_content_ai_project() {
+  if [ ! -d "$CONTENT_AI_REPO_PATH/.git" ]; then
+    if [ -z "$CONTENT_AI_REPO_URL" ]; then
+      echo "CONTENT_AI_REPO_URL is required when $CONTENT_AI_REPO_PATH is not already cloned." >&2
+      exit 1
+    fi
+    if [ -d "$CONTENT_AI_REPO_PATH" ] && [ ! -w "$CONTENT_AI_REPO_PATH" ] && command -v sudo >/dev/null 2>&1; then
+      sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_REPO_PATH"
+    fi
+    mkdir -p "$(dirname "$CONTENT_AI_REPO_PATH")"
+    git clone --branch "$CONTENT_AI_BRANCH" "$CONTENT_AI_REPO_URL" "$CONTENT_AI_REPO_PATH"
+    return 0
+  fi
+
+  echo "Updating Content AI projects at $CONTENT_AI_REPO_PATH..."
+  git -C "$CONTENT_AI_REPO_PATH" fetch origin "$CONTENT_AI_BRANCH" --prune
+  stash_content_ai_changes_for_update
+  git -C "$CONTENT_AI_REPO_PATH" checkout "$CONTENT_AI_BRANCH"
+  git -C "$CONTENT_AI_REPO_PATH" pull --ff-only origin "$CONTENT_AI_BRANCH"
+}
+
 ensure_settings_path
 restore_persisted_git_credentials
 configure_tfs_git_credentials
 ensure_codex_cli
 
-if [ ! -d "$CONTENT_AI_REPO_PATH/.git" ]; then
-  if [ -z "$CONTENT_AI_REPO_URL" ]; then
-    echo "CONTENT_AI_REPO_URL is required when $CONTENT_AI_REPO_PATH is not already cloned." >&2
-    exit 1
-  fi
-  if [ -d "$CONTENT_AI_REPO_PATH" ] && [ ! -w "$CONTENT_AI_REPO_PATH" ] && command -v sudo >/dev/null 2>&1; then
-    sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_REPO_PATH"
-  fi
-  mkdir -p "$(dirname "$CONTENT_AI_REPO_PATH")"
-  git clone --branch "$CONTENT_AI_BRANCH" "$CONTENT_AI_REPO_URL" "$CONTENT_AI_REPO_PATH"
-else
-  git -C "$CONTENT_AI_REPO_PATH" fetch origin "$CONTENT_AI_BRANCH" --prune
-  git -C "$CONTENT_AI_REPO_PATH" checkout "$CONTENT_AI_BRANCH"
-  git -C "$CONTENT_AI_REPO_PATH" pull --ff-only origin "$CONTENT_AI_BRANCH"
-fi
+sync_content_ai_project
 
 if [ ! -f "$PIPELINE_PROJECT_PATH/requirements.txt" ]; then
   echo "TFS Autonomous Pipeline project was not found at $PIPELINE_PROJECT_PATH." >&2
@@ -345,26 +392,59 @@ cat > "$HOME/.local/bin/tfs-autonomous-pipeline" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export CONTENT_AI_SETTINGS_PATH="\${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_SETTINGS_PATH}"
+export CONTENT_AI_REPO_PATH="\${CONTENT_AI_REPO_PATH:-$CONTENT_AI_REPO_PATH}"
+export CONTENT_AI_BRANCH="\${CONTENT_AI_BRANCH:-$CONTENT_AI_BRANCH}"
+export PIPELINE_PROJECT_PATH="\${PIPELINE_PROJECT_PATH:-\$CONTENT_AI_REPO_PATH/projects/tfs-doc-automation-mvp}"
 export CODEX_HOME="\${CODEX_HOME:-$CODEX_HOME}"
 export NPM_CONFIG_PREFIX="\${NPM_CONFIG_PREFIX:-$NPM_CONFIG_PREFIX}"
 export PATH="\$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:\$PATH"
-cd "$PIPELINE_PROJECT_PATH"
+cd "\$PIPELINE_PROJECT_PATH"
+sync_project() {
+  if [ ! -d "\$CONTENT_AI_REPO_PATH/.git" ]; then
+    echo "Content AI runtime copy is not a Git checkout at \$CONTENT_AI_REPO_PATH. Re-run the devcontainer post-create/bootstrap setup." >&2
+    return 1
+  fi
+  echo "Syncing Content AI runtime copy before starting the pipeline..."
+  git -C "\$CONTENT_AI_REPO_PATH" fetch origin "\$CONTENT_AI_BRANCH" --prune
+  if [ -n "\$(git -C "\$CONTENT_AI_REPO_PATH" status --porcelain --untracked-files=all)" ]; then
+    if [ "\${CONTENT_AI_AUTO_STASH_ON_UPDATE:-true}" != "true" ]; then
+      git -C "\$CONTENT_AI_REPO_PATH" status --short --untracked-files=all >&2 || true
+      echo "Content AI runtime copy has local changes. Run 'tfs-autonomous-pipeline sync-project' after reviewing them, or set CONTENT_AI_AUTO_STASH_ON_UPDATE=true." >&2
+      return 1
+    fi
+    backup_dir="\${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_SETTINGS_PATH}/backups"
+    timestamp="\$(date -u +"%Y%m%dT%H%M%SZ")"
+    mkdir -p "\$backup_dir"
+    git -C "\$CONTENT_AI_REPO_PATH" status --short --untracked-files=all > "\$backup_dir/content-ai-pre-wrapper-update-status-\$timestamp.txt" || true
+    git -C "\$CONTENT_AI_REPO_PATH" diff > "\$backup_dir/content-ai-pre-wrapper-update-worktree-\$timestamp.patch" || true
+    git -C "\$CONTENT_AI_REPO_PATH" diff --cached > "\$backup_dir/content-ai-pre-wrapper-update-index-\$timestamp.patch" || true
+    git -C "\$CONTENT_AI_REPO_PATH" stash push -u -m "content-ai auto-stash before wrapper update \$timestamp"
+    echo "Local Content AI runtime changes were stashed before starting the pipeline."
+  fi
+  git -C "\$CONTENT_AI_REPO_PATH" checkout "\$CONTENT_AI_BRANCH"
+  git -C "\$CONTENT_AI_REPO_PATH" pull --ff-only origin "\$CONTENT_AI_BRANCH"
+}
 case "\${1:-dashboard}" in
   dashboard)
+    sync_project
     exec "$PIPELINE_VENV/bin/python" -m uvicorn main:app --host "\${TFS_AUTONOMOUS_PIPELINE_HOST:-0.0.0.0}" --port "\${TFS_AUTONOMOUS_PIPELINE_PORT:-7000}"
     ;;
   worker)
+    sync_project
     exec "$PIPELINE_VENV/bin/python" run_worker.py
     ;;
   stop)
     pkill -f "uvicorn main:app" || true
-    pkill -f "$PIPELINE_PROJECT_PATH/run_worker.py" || true
+    pkill -f "\$PIPELINE_PROJECT_PATH/run_worker.py" || true
     ;;
   sync-assets)
-    exec bash "$PIPELINE_PROJECT_PATH/scripts/sync-content-ai-assets.sh" "\${2:-$TARGET_WORKSPACE}"
+    exec bash "\$PIPELINE_PROJECT_PATH/scripts/sync-content-ai-assets.sh" "\${2:-$TARGET_WORKSPACE}"
+    ;;
+  sync-project)
+    sync_project
     ;;
   *)
-    echo "Usage: tfs-autonomous-pipeline {dashboard|worker|stop|sync-assets}" >&2
+    echo "Usage: tfs-autonomous-pipeline {dashboard|worker|stop|sync-assets|sync-project}" >&2
     exit 2
     ;;
 esac

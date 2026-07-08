@@ -887,3 +887,16 @@ Next recommended tasks:
 - Confirmed that the same image can be pulled with an isolated empty `DOCKER_CONFIG`, and that the repository hook then passes markdownlint successfully.
 - Added a push retry path: when `git push` fails with Docker credential-helper output, the automation retries the same push with a temporary isolated `DOCKER_CONFIG`. This keeps repository hooks enabled while avoiding stale devcontainer Docker credential stores.
 - Added idempotent push recovery: if a retry/race returns a non-zero push error but `origin/<branch>` already points to the local `HEAD`, the automation treats the push as successful instead of leaving the dashboard in an error state.
+
+2026-07-06 Prebuilt devcontainer image planning:
+
+- Added `scripts/content-ai-post-create.sh` for the future Docker image flow where the Content AI project and dependencies are already installed in the image.
+- The new post-create script uses the image copy as a seed, ensures a writable runtime copy under `/workspaces/CM-AI-Content-Skills`, restores persistent settings from `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`, syncs managed AI assets into the target repository, prepares a clean Docker config for hook-driven linting, and creates the `tfs-autonomous-pipeline` wrapper.
+- Added `docs/docker-image-post-create.md` to define the Docker image requirements, expected paths, target devcontainer configuration, post-create responsibilities, environment variables, security model, and failure policy.
+
+2026-07-08 Pipeline run auto-sync:
+
+- A user hit a raw `git pull` failure because the runtime Content AI copy in `/workspaces/CM-AI-Content-Skills` had local changes while the remote branch was ahead.
+- Decided that the normal Run TFS Pipeline task must not require a hidden manual sync step. The generated `tfs-autonomous-pipeline dashboard` and `worker` commands now run a safe project sync first.
+- The sync fetches the configured `CONTENT_AI_BRANCH`, backs up local runtime-copy changes to `CONTENT_AI_SETTINGS_PATH/backups`, auto-stashes them when `CONTENT_AI_AUTO_STASH_ON_UPDATE=true`, and then fast-forwards.
+- If auto-stash is disabled or the image-managed runtime copy cannot be updated from Git, the wrapper prints a clear remediation message instead of exposing raw Git merge errors.
