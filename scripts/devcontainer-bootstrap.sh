@@ -158,11 +158,13 @@ ensure_node_runtime() {
     local saved_npm_config_prefix
     saved_npm_config_prefix="${NPM_CONFIG_PREFIX:-}"
     unset NPM_CONFIG_PREFIX
+    set +u
     # shellcheck disable=SC1091
     . "/usr/local/share/nvm/nvm.sh"
     nvm install --lts
     nvm alias default 'lts/*' >/dev/null 2>&1 || true
     nvm use --lts >/dev/null
+    set -u
     export NPM_CONFIG_PREFIX="$saved_npm_config_prefix"
   fi
 }
