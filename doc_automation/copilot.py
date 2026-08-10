@@ -303,6 +303,14 @@ def wsl_path_to_unc_path(distro: str, path_value: str) -> str:
 
 
 def _resolve_windows_code_command() -> str:
+    if current_execution_runtime() == EXECUTION_RUNTIME_DEVCONTAINER and os.name != "nt":
+        # Devcontainers often provide a generic `/usr/local/bin/code` wrapper before
+        # the VS Code Remote CLI on PATH. The wrapper cannot deliver a chat handoff
+        # to the active window, whereas the remote CLI can.
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            candidate = Path(directory) / "code"
+            if "/remote-cli" in str(candidate).replace("\\", "/") and candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
     for command_name in ["code.cmd", "code"]:
         resolved = shutil.which(command_name)
         if resolved:
@@ -393,6 +401,19 @@ def _open_vscode_workspace_from_windows(
     }
 
 
+def _use_current_devcontainer_workspace(code_command: str) -> bool:
+    """Use the VS Code remote CLI when the dashboard itself runs in a devcontainer."""
+    if current_execution_runtime() != EXECUTION_RUNTIME_DEVCONTAINER or os.name == "nt":
+        return False
+    normalized_command = str(code_command or "").replace("\\", "/").lower()
+    if "/remote-cli/" in normalized_command:
+        return True
+    raise CopilotIntegrationError(
+        "The dashboard is running in a devcontainer, but the VS Code remote CLI is unavailable. "
+        "Start the dashboard from the VS Code task so the current devcontainer workspace can receive the agent handoff."
+    )
+
+
 def _launch_vscode_chat_from_windows(
     *,
     distro: str,
@@ -407,21 +428,32 @@ def _launch_vscode_chat_from_windows(
     window_mode: str,
 ) -> Dict[str, Any]:
     code_command = _resolve_windows_code_command()
-    open_metadata = _open_vscode_workspace_from_windows(
-        distro=distro,
-        workspace_path=workspace_path,
-        open_wsl_remote=open_wsl_remote,
-        window_mode=window_mode,
-    )
-
-    time.sleep(1.0)
+    use_current_workspace = _use_current_devcontainer_workspace(code_command)
+    if use_current_workspace:
+        # The remote CLI is already connected to the active devcontainer. `/app` is
+        # valid there but not in the WSL host, so opening a WSL folder URI causes VS
+        # Code to ask for a workspace instead of delivering the chat handoff.
+        open_metadata = {
+            "workspace_target": workspace_path,
+            "launch_context": "devcontainer-current-workspace",
+            "open_stdout": "",
+            "open_stderr": "",
+        }
+    else:
+        open_metadata = _open_vscode_workspace_from_windows(
+            distro=distro,
+            workspace_path=workspace_path,
+            open_wsl_remote=open_wsl_remote,
+            window_mode=window_mode,
+        )
+        time.sleep(1.0)
 
     chat_command = [code_command, "chat", "--mode", agent_identifier, "--reuse-window"]
-    attached_unc_paths: List[str] = []
+    attached_launch_paths: List[str] = []
     for path in attached_paths:
-        unc_path = _wsl_path_to_unc_path(distro, path)
-        attached_unc_paths.append(unc_path)
-        chat_command.extend(["--add-file", unc_path])
+        launch_path = path if use_current_workspace else _wsl_path_to_unc_path(distro, path)
+        attached_launch_paths.append(launch_path)
+        chat_command.extend(["--add-file", launch_path])
     configured_agent = str(agent_name or "the configured Settings agent").strip()
     configured_model = str(model_name or "the configured Settings model").strip()
     safety_note = (
@@ -452,7 +484,7 @@ def _launch_vscode_chat_from_windows(
     return {
         "workspace_target": str(open_metadata.get("workspace_target") or ""),
         "launch_context": str(open_metadata.get("launch_context") or ""),
-        "attached_unc_paths": attached_unc_paths,
+        "attached_unc_paths": attached_launch_paths,
         "open_stdout": str(open_metadata.get("open_stdout") or ""),
         "open_stderr": str(open_metadata.get("open_stderr") or ""),
         "chat_stdout": chat_result.stdout.strip(),
@@ -548,6 +580,38 @@ def check_agent_provider_prerequisites(
     cli_command_template: str,
 ) -> Dict[str, Any]:
     clean_provider = str(provider or "").strip()
+    if clean_provider == "vscode":
+        try:
+            code_command = _resolve_windows_code_command()
+        except CopilotIntegrationError as exc:
+            return {
+                "status": "error",
+                "ok": False,
+                "message": str(exc),
+            }
+        result = _run_windows_command([code_command, "--help"], timeout_seconds=30)
+        help_text = "\n".join([result.stdout or "", result.stderr or ""]).lower()
+        supports_chat_handoff = result.returncode == 0 and "chat" in help_text and "--mode" in help_text and "--add-file" in help_text
+        if not supports_chat_handoff:
+            return {
+                "status": "error",
+                "ok": False,
+                "message": (
+                    "The installed VS Code CLI does not support the Chat handoff options required by this pipeline "
+                    "(`code chat --mode ... --add-file ...`). Update VS Code to a version that supports the Chat CLI, "
+                    "or select an automation-capable CLI provider such as Codex CLI."
+                ),
+                "stdout": result.stdout.strip(),
+                "stderr": result.stderr.strip(),
+            }
+        return {
+            "status": "ok",
+            "ok": True,
+            "message": "VS Code CLI supports automated Copilot Chat handoff for the active workspace.",
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+
     if clean_provider not in {"codex_cli", "claude_cli", "custom_cli"}:
         return {
             "status": "skipped",

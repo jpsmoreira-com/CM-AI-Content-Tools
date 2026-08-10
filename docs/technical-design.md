@@ -234,6 +234,8 @@ This adapter can evolve to use:
 - an internally approved CLI agent;
 - another approved enterprise integration.
 
+Provider capability must be verified in the runtime that will execute the work. In particular, the VS Code provider requires a VS Code CLI that supports the Chat handoff options `code chat --mode ... --add-file ...`. When those options are unavailable, the dashboard blocks the work item before context capture and reports the capability gap. A standard VS Code Remote CLI can open folders but cannot by itself automate an agent chat. In that environment, use an automation-capable CLI provider such as Codex CLI, or deploy a dedicated VS Code extension/bridge that exposes a supported chat automation interface.
+
 Manual prompt generation is useful for diagnosis, but it is not a valid implementation of the automated pipeline because it does not remove the reviewer from repetitive execution work.
 
 ### 7.4.1 Context Capture Engine

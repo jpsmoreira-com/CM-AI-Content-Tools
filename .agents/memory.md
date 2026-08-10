@@ -900,3 +900,11 @@ Next recommended tasks:
 - Decided that the normal Run TFS Pipeline task must not require a hidden manual sync step. The generated `tfs-autonomous-pipeline dashboard` and `worker` commands now run a safe project sync first.
 - The sync fetches the configured `CONTENT_AI_BRANCH`, backs up local runtime-copy changes to `CONTENT_AI_SETTINGS_PATH/backups`, auto-stashes them when `CONTENT_AI_AUTO_STASH_ON_UPDATE=true`, and then fast-forwards.
 - If auto-stash is disabled or the image-managed runtime copy cannot be updated from Git, the wrapper prints a clear remediation message instead of exposing raw Git merge errors.
+
+2026-08-10 VS Code Copilot handoff diagnostics:
+
+- Investigated a failed automatic handoff for WI 157706 in the active devcontainer. The portal workspace `/app` is a container mount, so it must never be opened as a `vscode-remote://wsl+Ubuntu/app` folder URI because that path does not exist on the WSL host and causes VS Code to request a workspace.
+- Updated the VS Code handoff logic to use the current devcontainer workspace and container-local context paths when the dashboard runs through the VS Code Remote CLI. The resolver also explicitly prefers the VS Code `remote-cli` binary over generic `code` wrappers that can appear earlier on `PATH`.
+- The live capability test established that the installed VS Code CLI does not support `code chat --mode ... --add-file ...`; it ignores the chat options and therefore cannot programmatically start a Copilot agent with the prepared context package.
+- Added a VS Code provider preflight on Settings save and before WI launch. Unsupported environments now fail immediately with a clear remediation message, before context capture, branch edits, or background polling begin.
+- Current operational decision: use Codex CLI (or another supported CLI executor) for fully autonomous runs in this devcontainer. VS Code Copilot requires a future VS Code version with Chat CLI support or a dedicated extension/bridge that exposes an automation API.
