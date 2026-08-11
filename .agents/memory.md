@@ -908,3 +908,14 @@ Next recommended tasks:
 - The live capability test established that the installed VS Code CLI does not support `code chat --mode ... --add-file ...`; it ignores the chat options and therefore cannot programmatically start a Copilot agent with the prepared context package.
 - Added a VS Code provider preflight on Settings save and before WI launch. Unsupported environments now fail immediately with a clear remediation message, before context capture, branch edits, or background polling begin.
 - Current operational decision: use Codex CLI (or another supported CLI executor) for fully autonomous runs in this devcontainer. VS Code Copilot requires a future VS Code version with Chat CLI support or a dedicated extension/bridge that exposes an automation API.
+
+2026-08-11 VS Code Copilot Bridge implementation:
+
+- Added `vscode_bridge` as a distinct provider, preserving the existing Codex CLI execution and result-processing flow.
+- Added the private `criticalmanufacturing.cmf-content-ai-pipeline-bridge` VS Code workspace extension under `vscode-copilot-bridge/`, together with a reproducible VSIX packaging script.
+- The dashboard now writes a durable `bridge-job.json` next to each prepared context package. The bridge processes the job in the active devcontainer workspace, uses the public VS Code Language Model API to select the configured Copilot model, performs a bounded controlled read/list/search/apply loop, and writes the standard `agent-result.json` and bridge state files.
+- The bridge only accepts workspace-relative edits and requires exact `old_text` preconditions for replacements. It does not execute shell commands, access the network, perform Git operations, or create pull requests.
+- Added `vscode_bridge` preflight validation. It checks that the bridge is installed in the current devcontainer user's VS Code Server extensions folder before a WI context is prepared.
+- Added bridge installation to both the regular and prebuilt-image devcontainer bootstrap paths. The bootstrap copies the bridge into the VS Code Server extensions folder and uses the Remote CLI to register its VSIX when that CLI socket is available; the copied extension remains available after the next remote reconnect.
+- Important platform constraint: VS Code may require a one-time signed-in-user consent dialog before any extension can invoke Copilot through the public Language Model API. This is not bypassed. Once granted, the bridge can execute queued jobs without an item-by-item manual chat handoff.
+- Next validation: rebuild/reopen the target devcontainer, confirm bridge preflight in Settings, then run one real WI with `vscode_bridge` and the approved configured Copilot model. Confirm the job produces `agent-result.json`, passes dashboard validation, and continues through push and Draft PR creation.

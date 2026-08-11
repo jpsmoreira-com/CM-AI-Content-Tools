@@ -262,6 +262,22 @@ fi
 "$PIPELINE_VENV/bin/python" -m pip install --upgrade pip
 "$PIPELINE_VENV/bin/python" -m pip install -r "$PIPELINE_PROJECT_PATH/requirements.txt"
 
+install_vscode_copilot_bridge() {
+  local bridge_directory="$PIPELINE_PROJECT_PATH/vscode-copilot-bridge"
+  local extension_directory="$HOME/.vscode-server/extensions/criticalmanufacturing.cmf-content-ai-pipeline-bridge-0.1.0"
+  if [ ! -f "$bridge_directory/package.json" ] || [ ! -f "$bridge_directory/extension.js" ]; then
+    echo "Content AI VS Code Copilot bridge source was not found at $bridge_directory." >&2
+    return 0
+  fi
+  mkdir -p "$(dirname "$extension_directory")"
+  rm -rf "$extension_directory"
+  mkdir -p "$extension_directory"
+  cp "$bridge_directory/package.json" "$bridge_directory/extension.js" "$bridge_directory/README.md" "$extension_directory/"
+  echo "Installed Content AI VS Code Copilot bridge at $extension_directory"
+}
+
+install_vscode_copilot_bridge
+
 CONTENT_AI_PIPELINE_PROJECT_PATH="$PIPELINE_PROJECT_PATH" \
 CONTENT_AI_SETTINGS_PATH="$CONTENT_AI_SETTINGS_PATH" \
 CONTENT_AI_TARGET_REPOSITORY="$(infer_target_repository)" \

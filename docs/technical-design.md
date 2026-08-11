@@ -81,7 +81,7 @@ Persistence: SQLite
 Integration: TFS/Azure DevOps Server REST API
 Runtime configuration: .env
 Background execution: embedded orchestrator plus run_worker.py for service-style execution
-Agent providers: VS Code Copilot, Codex CLI, Claude CLI, or custom CLI command templates
+Agent providers: VS Code Copilot Bridge, VS Code Copilot Chat CLI (legacy), Codex CLI, Claude CLI, or custom CLI command templates
 ```
 
 If the project later needs a richer client-side experience, the next likely step is:
@@ -234,7 +234,11 @@ This adapter can evolve to use:
 - an internally approved CLI agent;
 - another approved enterprise integration.
 
-Provider capability must be verified in the runtime that will execute the work. In particular, the VS Code provider requires a VS Code CLI that supports the Chat handoff options `code chat --mode ... --add-file ...`. When those options are unavailable, the dashboard blocks the work item before context capture and reports the capability gap. A standard VS Code Remote CLI can open folders but cannot by itself automate an agent chat. In that environment, use an automation-capable CLI provider such as Codex CLI, or deploy a dedicated VS Code extension/bridge that exposes a supported chat automation interface.
+Provider capability must be verified in the runtime that will execute the work. The legacy VS Code Chat CLI provider requires a VS Code CLI that supports `code chat --mode ... --add-file ...`; a standard VS Code Remote CLI can open folders but cannot by itself automate an agent chat.
+
+The supported devcontainer route for GitHub Copilot is `vscode_bridge`. It is a private workspace extension (`criticalmanufacturing.cmf-content-ai-pipeline-bridge`) that uses the public VS Code Language Model API instead of attempting to drive the Chat UI. The dashboard writes `bridge-job.json` beside the work item package; the extension reads the package from the active workspace, performs a bounded read/search/apply loop, and writes the existing `agent-result.json` contract. This keeps provider orchestration separate from Codex CLI while preserving downstream validation, push, reporting, and Draft PR behavior.
+
+The VS Code Language Model API can require one-time consent from the signed-in Copilot user before an extension may invoke the configured model. This consent is enforced by VS Code and must not be bypassed. After consent, jobs are queued and executed without a per-work-item manual chat handoff. The bridge validates that a configured Copilot model is available and writes a structured error result if the model cannot be matched, the extension is inactive, or the controlled edit protocol fails.
 
 Manual prompt generation is useful for diagnosis, but it is not a valid implementation of the automated pipeline because it does not remove the reviewer from repetitive execution work.
 
@@ -478,6 +482,7 @@ The original phases below remain useful as planning vocabulary, but the current 
 Current next priorities:
 
 - improve Settings UX by grouping automation, provider, repository, reviewer, and Cherry Pick configuration more clearly;
+- validate the VS Code Copilot Bridge against an approved company Copilot model and a real documentation work item;
 - add Microsoft Loop context ingestion;
 - harden the dedicated worker/service deployment shape;
 - improve observability and retry/backoff around TFS, Git, and provider failures;

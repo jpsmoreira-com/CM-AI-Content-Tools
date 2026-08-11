@@ -3029,9 +3029,14 @@ class AutomationService:
         except ValueError as exc:
             raise ServiceError(str(exc)) from exc
 
-    def _check_agent_provider_prerequisites(self, runtime_settings: Dict[str, Any]) -> Dict[str, Any]:
+    def _check_agent_provider_prerequisites(
+        self,
+        runtime_settings: Dict[str, Any],
+        *,
+        workspace_path: str = "",
+    ) -> Dict[str, Any]:
         provider = str(runtime_settings.get("copilot_provider") or "").strip()
-        if provider not in {"vscode", "codex_cli", "claude_cli", "custom_cli"}:
+        if provider not in {"vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
             return {
                 "status": "skipped",
                 "ok": True,
@@ -3044,6 +3049,8 @@ class AutomationService:
                     distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
                     provider=provider,
                     cli_command_template=str(runtime_settings.get("copilot_cli_command_template") or "").strip(),
+                    workspace_path=workspace_path,
+                    model_name=str(runtime_settings.get("copilot_model_name") or "").strip(),
                 )
                 message = str(preflight.get("message") or "").lower()
                 if (
@@ -3939,7 +3946,7 @@ class AutomationService:
             mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
             raise ServiceError(error_message)
 
-        if provider == "vscode" and strict_model_safety:
+        if provider in {"vscode", "vscode_bridge"} and strict_model_safety:
             error_message = (
                 "Strict CM GPT Safety Mode prepares context only and does not run automatic edits. "
                 "Disable it only for temporary end-to-end testing or when VS Code Copilot can enforce the approved CM GPT model for this workspace."
@@ -3956,7 +3963,10 @@ class AutomationService:
             mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
             raise ServiceError(error_message)
 
-        provider_preflight = self._check_agent_provider_prerequisites(runtime_settings)
+        provider_preflight = self._check_agent_provider_prerequisites(
+            runtime_settings,
+            workspace_path=workspace_path,
+        )
         if not bool(provider_preflight.get("ok")):
             error_message = str(provider_preflight.get("message") or "The configured agent provider is not ready.").strip()
             mark_copilot_result(

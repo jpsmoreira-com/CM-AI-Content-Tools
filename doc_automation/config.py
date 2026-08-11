@@ -17,7 +17,7 @@ ENV_PATH = APP_DIR / ".env"
 VS_CODE_SETTINGS_PATH = Path.home() / "AppData" / "Roaming" / "Code" / "User" / "settings.json"
 AUTH_OPTIONS = ["Windows Credentials", "Git Credentials", "PAT"]
 COPILOT_PERMISSION_LEVEL_OPTIONS = ["default", "autoApprove", "autopilot"]
-COPILOT_PROVIDER_OPTIONS = ["vscode", "codex_cli", "claude_cli", "custom_cli", "m365_desktop"]
+COPILOT_PROVIDER_OPTIONS = ["vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli", "m365_desktop"]
 COPILOT_VSCODE_WINDOW_MODE_OPTIONS = ["reuse", "new"]
 CONTEXT_CAPTURE_ROOT_MODE_OPTIONS = ["parent", "task"]
 EXECUTION_RUNTIME_OPTIONS = ["devcontainer", "windows_host"]
@@ -88,7 +88,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "default_current_iteration_only": True,
     "execution_runtime": "devcontainer",
     "copilot_wsl_distro": "Ubuntu",
-    "copilot_provider": "vscode",
+    "copilot_provider": "vscode_bridge",
     "copilot_model_name": "CM GPT",
     "copilot_agent_name": "CM GPT",
     "copilot_auto_launch": True,

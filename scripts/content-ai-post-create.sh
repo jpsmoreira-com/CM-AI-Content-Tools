@@ -372,6 +372,34 @@ check_codex_cli() {
   fi
 }
 
+install_vscode_copilot_bridge() {
+  local bridge_directory="$PIPELINE_PROJECT_PATH/vscode-copilot-bridge"
+  local bridge_vsix="$bridge_directory/content-ai-pipeline-bridge-0.1.0.vsix"
+  local extension_directory="$HOME/.vscode-server/extensions/criticalmanufacturing.cmf-content-ai-pipeline-bridge-0.1.0"
+
+  if [ ! -f "$bridge_directory/package.json" ] || [ ! -f "$bridge_directory/extension.js" ]; then
+    warn "Content AI VS Code Copilot bridge source was not found at $bridge_directory."
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$extension_directory")"
+  rm -rf "$extension_directory"
+  mkdir -p "$extension_directory"
+  cp "$bridge_directory/package.json" "$bridge_directory/extension.js" "$bridge_directory/README.md" "$extension_directory/"
+  log "Installed Content AI VS Code Copilot bridge files at $extension_directory"
+
+  # When invoked by a connected VS Code remote session, the CLI can register the
+  # VSIX immediately. The copied extension files remain a reliable fallback for
+  # the next devcontainer reconnect if the Remote CLI socket is not available.
+  if [ -n "${VSCODE_IPC_HOOK_CLI:-}" ] && command -v code >/dev/null 2>&1 && [ -f "$bridge_vsix" ]; then
+    if timeout 20 code --install-extension "$bridge_vsix" --force >/dev/null 2>&1; then
+      log "Registered Content AI VS Code Copilot bridge through the VS Code Remote CLI."
+    else
+      warn "Could not register the bridge through the Remote CLI. It will be discovered on the next VS Code remote reconnect."
+    fi
+  fi
+}
+
 write_wrappers() {
   mkdir -p "$HOME/.local/bin"
   local wrapper="$HOME/.local/bin/tfs-autonomous-pipeline"
@@ -478,6 +506,7 @@ write_runtime_files "$target_repository"
 sync_content_ai_assets
 prepare_docker_config
 check_codex_cli
+install_vscode_copilot_bridge
 write_wrappers
 run_health_check
 

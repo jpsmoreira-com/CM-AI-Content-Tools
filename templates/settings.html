@@ -379,7 +379,7 @@
                             <select name="copilot_provider">
                                 {% for option in copilot_provider_options %}
                                 <option value="{{ option }}" {% if option == runtime_settings.copilot_provider %}selected{% endif %}>
-                                    {% if option == "m365_desktop" %}Microsoft 365 Copilot Desktop (not automation-capable){% elif option == "codex_cli" %}Codex CLI{% elif option == "claude_cli" %}Claude CLI{% elif option == "custom_cli" %}Custom CLI{% else %}VS Code Copilot{% endif %}
+                                    {% if option == "m365_desktop" %}Microsoft 365 Copilot Desktop (not automation-capable){% elif option == "vscode_bridge" %}VS Code Copilot Bridge (autonomous){% elif option == "vscode" %}VS Code Copilot Chat CLI (legacy){% elif option == "codex_cli" %}Codex CLI{% elif option == "claude_cli" %}Claude CLI{% elif option == "custom_cli" %}Custom CLI{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>

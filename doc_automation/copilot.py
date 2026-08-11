@@ -24,6 +24,7 @@ DOCX_RE = re.compile(r"\b[^\\/\s<>:\"|?*]+\.(?:docx|docm|doc)\b", re.IGNORECASE)
 IMG_SRC_RE = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
 CUSTOM_AGENT_FILE_BASENAME = "cmf-tfs-doc-automation"
 WORKSPACE_CONTEXT_ROOT = ".automation-context/copilot"
+VSCODE_BRIDGE_STATUS_FILE = "bridge-status.json"
 EXECUTION_RUNTIME_DEVCONTAINER = "devcontainer"
 EXECUTION_RUNTIME_WINDOWS_HOST = "windows_host"
 EXECUTION_RUNTIME_OPTIONS = {EXECUTION_RUNTIME_DEVCONTAINER, EXECUTION_RUNTIME_WINDOWS_HOST}
@@ -573,13 +574,151 @@ def _launch_cli_agent_in_wsl(
     }
 
 
+def _queue_vscode_bridge_job(
+    *,
+    distro: str,
+    package_directory: str,
+    workspace_path: str,
+    branch_name: str,
+    agent_name: str,
+    model_name: str,
+    prompt_path: str,
+    agent_result_path: str,
+) -> Dict[str, Any]:
+    """Queue a durable VS Code Language Model job for the workspace bridge extension."""
+    job_path = f"{package_directory}/bridge-job.json"
+    state_path = f"{package_directory}/bridge-job-state.json"
+    status_path = f"{package_directory}/bridge-status.json"
+    job = {
+        "schema_version": 1,
+        "provider": "vscode_bridge",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "workspace_path": workspace_path,
+        "branch_name": branch_name,
+        "agent_name": agent_name,
+        "model_name": model_name,
+        "prompt_path": prompt_path,
+        "agent_result_path": agent_result_path,
+    }
+    _remove_file_via_wsl(distro, agent_result_path)
+    _remove_file_via_wsl(distro, state_path)
+    _write_file_via_wsl(distro, job_path, json.dumps(job, ensure_ascii=False, indent=2) + "\n")
+    return {
+        "launch_context": "vscode_bridge",
+        "workspace_target": workspace_path,
+        "bridge_job_path": job_path,
+        "cli_log_path": status_path,
+    }
+
+
 def check_agent_provider_prerequisites(
     *,
     distro: str,
     provider: str,
     cli_command_template: str,
+    workspace_path: str = "",
+    model_name: str = "",
 ) -> Dict[str, Any]:
     clean_provider = str(provider or "").strip()
+    if clean_provider == "vscode_bridge":
+        script = r'''
+set -eu
+extension_root="${HOME}/.vscode-server/extensions"
+if [ ! -d "$extension_root" ]; then
+  printf '%s\n' "VS Code remote extensions are not available for the current user. Open the repository in a VS Code devcontainer first."
+  exit 20
+fi
+bridge_manifest="$(find "$extension_root" -maxdepth 2 -type f -path '*criticalmanufacturing.cmf-content-ai-pipeline-bridge*/package.json' -print -quit 2>/dev/null || true)"
+if [ -z "$bridge_manifest" ]; then
+  printf '%s\n' "The Content AI VS Code Copilot bridge is not installed in this devcontainer. Rebuild/reopen the devcontainer so its bootstrap can install the bridge."
+  exit 21
+fi
+printf '%s\n' "$bridge_manifest"
+'''
+        result = _run_wsl_script(distro, script, timeout_seconds=30)
+        if result.returncode != 0:
+            return {
+                "status": "error",
+                "ok": False,
+                "message": (result.stdout or result.stderr or "VS Code Copilot bridge preflight failed.").strip(),
+                "stdout": result.stdout.strip(),
+                "stderr": result.stderr.strip(),
+            }
+        bridge_status: Dict[str, Any] = {}
+        clean_workspace_path = str(workspace_path or "").strip()
+        if clean_workspace_path:
+            status_result = _run_wsl_script(
+                distro,
+                f"status_path={_shell_quote(f'{clean_workspace_path}/{WORKSPACE_CONTEXT_ROOT}/{VSCODE_BRIDGE_STATUS_FILE}')}; "
+                'if [ -f "$status_path" ]; then cat "$status_path"; fi',
+                timeout_seconds=15,
+            )
+            raw_status = (status_result.stdout or "").strip()
+            if raw_status:
+                try:
+                    bridge_status = json.loads(raw_status)
+                except json.JSONDecodeError:
+                    bridge_status = {}
+            status_value = str(bridge_status.get("status") or "").strip().lower()
+            if status_value == "consent_required":
+                return {
+                    "status": "error",
+                    "ok": False,
+                    "message": (
+                        "VS Code Copilot requires one-time consent for the Content AI bridge. "
+                        "In the active devcontainer window, run `Content AI: Enable Copilot Bridge` once, then retry the work item."
+                    ),
+                    "stdout": raw_status,
+                    "stderr": "",
+                }
+            if not bridge_status:
+                return {
+                    "status": "error",
+                    "ok": False,
+                    "message": (
+                        "The Content AI VS Code Copilot bridge has not activated for the selected workspace yet. "
+                        "Reload/reopen the active devcontainer workspace, then retry after the bridge reports ready."
+                    ),
+                    "stdout": "",
+                    "stderr": "",
+                }
+            requested_model = re.sub(r"[^a-z0-9]+", "", str(model_name or "").lower())
+            available_models = bridge_status.get("available_models")
+            if requested_model and isinstance(available_models, list):
+                normalized_available = [
+                    re.sub(
+                        r"[^a-z0-9]+",
+                        "",
+                        " ".join(
+                            str(model.get(key) or "")
+                            for key in ["id", "name", "vendor", "family", "version"]
+                        ).lower(),
+                    )
+                    for model in available_models
+                    if isinstance(model, dict)
+                ]
+                if normalized_available and not any(
+                    requested_model in candidate or candidate in requested_model
+                    for candidate in normalized_available
+                    if candidate
+                ):
+                    return {
+                        "status": "error",
+                        "ok": False,
+                        "message": (
+                            f"The configured Copilot model '{model_name}' is not available to the active VS Code bridge. "
+                            "Choose one of the models reported by the bridge or adjust the Copilot entitlement."
+                        ),
+                        "stdout": raw_status,
+                        "stderr": "",
+                    }
+        return {
+            "status": "ok",
+            "ok": True,
+            "message": "The Content AI VS Code Copilot bridge is installed. Queued jobs will run in the active VS Code devcontainer workspace.",
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
     if clean_provider == "vscode":
         try:
             code_command = _resolve_windows_code_command()
@@ -2199,11 +2338,11 @@ def prepare_cm_gpt_handoff(
     if not clean_agent_name:
         raise CopilotIntegrationError("Configure the CM GPT agent name before launching the integration.")
     clean_provider = str(provider or "").strip() or "m365_desktop"
-    if clean_provider not in {"m365_desktop", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
+    if clean_provider not in {"m365_desktop", "vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
         raise CopilotIntegrationError(f"Unsupported agent provider '{clean_provider}'.")
     if strict_model_safety and clean_provider in {"codex_cli", "claude_cli", "custom_cli"}:
         raise CopilotIntegrationError("Strict CM GPT Safety Mode can only be used with the CM GPT-capable Copilot providers.")
-    if strict_model_safety and clean_provider == "vscode" and clean_model_name.strip().lower() != "cm gpt":
+    if strict_model_safety and clean_provider in {"vscode", "vscode_bridge"} and clean_model_name.strip().lower() != "cm gpt":
         raise CopilotIntegrationError("The configured Copilot model must be exactly 'CM GPT' before launching this workflow.")
     if clean_provider == "m365_desktop" and clean_agent_name.strip().lower() != "cm gpt":
         raise CopilotIntegrationError("The Microsoft 365 Copilot Desktop provider must use the approved 'CM GPT' agent.")
@@ -2383,18 +2522,28 @@ def prepare_cm_gpt_handoff(
             f"Temporary test mode: use `{configured_model}` to validate the end-to-end documentation automation flow. "
             "The CM GPT-only guard is intentionally disabled for this run."
         )
+    provider_configuration = (
+        "Run this request through the configured VS Code Copilot Language Model bridge:\n"
+        f"- Provider: `{clean_provider}`\n"
+        f"- Model Name: `{clean_model_name or '-'}`\n"
+        f"- Agent Profile: `{clean_agent_name}`\n\n"
+        "The bridge selects the configured VS Code Copilot model and applies the dashboard context and agent profile as instructions. "
+        "It does not attempt to drive the VS Code Chat UI or create pull requests."
+        if clean_provider == "vscode_bridge"
+        else (
+            "Run this request using the agent and model configured in the dashboard Settings:\n"
+            f"- Agent Name: `{clean_agent_name}`\n"
+            f"- Model Name: `{clean_model_name or '-'}`\n"
+            f"- VS Code transport mode: `{agent_identifier}`\n\n"
+            "The transport mode is only used by the dashboard to deliver the handoff to VS Code. "
+            "Do not stop merely because the transport mode name is not visible in the chat UI. "
+            "If the configured agent/model cannot be applied, follow the model safety policy below and record the mismatch in `reviewer_notes`."
+        )
+    )
     prompt = "\n\n".join(
         [
             "# TFS Documentation Automation Handoff",
-            (
-                "Run this request using the agent and model configured in the dashboard Settings:\n"
-                f"- Agent Name: `{clean_agent_name}`\n"
-                f"- Model Name: `{clean_model_name or '-'}`\n"
-                f"- VS Code transport mode: `{agent_identifier}`\n\n"
-                "The transport mode is only used by the dashboard to deliver the handoff to VS Code. "
-                "Do not stop merely because the transport mode name is not visible in the chat UI. "
-                "If the configured agent/model cannot be applied, follow the model safety policy below and record the mismatch in `reviewer_notes`."
-            ),
+            provider_configuration,
             model_policy,
             (
                 "Read the prepared context package before any repository analysis, build, lint, or edit. "
@@ -2454,6 +2603,17 @@ def prepare_cm_gpt_handoff(
                 provider=clean_provider,
                 log_path=cli_log_path,
             )
+        elif clean_provider == "vscode_bridge":
+            launch_metadata = _queue_vscode_bridge_job(
+                distro=effective_distro,
+                package_directory=package_directory,
+                workspace_path=clean_workspace_path,
+                branch_name=clean_branch_name,
+                agent_name=clean_agent_name,
+                model_name=clean_model_name,
+                prompt_path=prompt_path,
+                agent_result_path=agent_result_path,
+            )
         else:
             launch_metadata = _launch_vscode_chat_from_windows(
                 distro=effective_distro,
@@ -2471,7 +2631,7 @@ def prepare_cm_gpt_handoff(
     workspace_state = inspect_workspace_state(effective_distro, clean_workspace_path)
     if clean_provider == "m365_desktop":
         result_status = "desktop_prepared" if auto_launch else "prepared"
-    elif clean_provider in {"codex_cli", "claude_cli", "custom_cli"}:
+    elif clean_provider in {"codex_cli", "claude_cli", "custom_cli", "vscode_bridge"}:
         result_status = "launched" if auto_launch else "prepared"
     else:
         result_status = "prepared" if strict_model_safety else ("launched" if auto_launch else "prepared")
@@ -2498,6 +2658,7 @@ def prepare_cm_gpt_handoff(
         "desktop_url": str(launch_metadata.get("desktop_url") or ""),
         "cli_log_path": str(launch_metadata.get("cli_log_path") or ""),
         "cli_pid": str(launch_metadata.get("cli_pid") or ""),
+        "bridge_job_path": str(launch_metadata.get("bridge_job_path") or ""),
         "instruction_index_path": instruction_index_path,
         "expected_instruction_files": expected_instruction_files,
         "agent_file_paths": agent_file_paths,
