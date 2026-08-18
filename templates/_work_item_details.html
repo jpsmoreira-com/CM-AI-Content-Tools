@@ -188,45 +188,6 @@
                     </section>
                 </div>
 
-                {% if item.automation_events %}
-                <section>
-                    <h4>History</h4>
-                    <div class="audit-timeline">
-                        {% for event in item.automation_events %}
-                        <article class="audit-event is-{{ event.level }}">
-                            <div class="audit-event-marker"></div>
-                            <div class="audit-event-body">
-                                <div class="audit-event-header">
-                                    <strong>{{ event.stage }}</strong>
-                                    <span class="audit-event-status">{{ event.status }}</span>
-                                    <time>{{ event.created_at }}</time>
-                                </div>
-                                <p>{{ event.message }}</p>
-                                {% if event.metadata %}
-                                <dl class="audit-event-metadata">
-                                    {% for key, value in event.metadata.items() %}
-                                    <div>
-                                        <dt>{{ key | replace("_", " ") }}</dt>
-                                        <dd>
-                                            {% if "url" in key %}
-                                            <a href="{{ value }}" target="_blank" rel="noreferrer noopener">{{ value }}</a>
-                                            {% else %}
-                                            <code>{{ value }}</code>
-                                            {% endif %}
-                                        </dd>
-                                    </div>
-                                    {% endfor %}
-                                </dl>
-                                {% endif %}
-                            </div>
-                        </article>
-                        {% endfor %}
-                    </div>
-                </section>
-                {% else %}
-                <p class="small-note">No automation events have been recorded for this work item yet.</p>
-                {% endif %}
-
                 {% if item.branch_error or item.copilot_error or item.agent_result_error or item.push_error or item.pr_error %}
                 <section>
                     <h4>Automation Outcome</h4>
@@ -273,6 +234,46 @@
                     </div>
                 </section>
                 {% endif %}
+
+                {% if item.automation_events %}
+                <section>
+                    <h4>History</h4>
+                    <div class="audit-timeline">
+                        {% for event in item.automation_events %}
+                        <article class="audit-event is-{{ event.level }}">
+                            <div class="audit-event-marker"></div>
+                            <div class="audit-event-body">
+                                <div class="audit-event-header">
+                                    <strong>{{ event.stage }}</strong>
+                                    <span class="audit-event-status">{{ event.status }}</span>
+                                    <time>{{ event.created_at }}</time>
+                                </div>
+                                <p>{{ event.message }}</p>
+                                {% if event.metadata %}
+                                <dl class="audit-event-metadata">
+                                    {% for key, value in event.metadata.items() %}
+                                    <div>
+                                        <dt>{{ key | replace("_", " ") }}</dt>
+                                        <dd>
+                                            {% if "url" in key %}
+                                            <a href="{{ value }}" target="_blank" rel="noreferrer noopener">{{ value }}</a>
+                                            {% else %}
+                                            <code>{{ value }}</code>
+                                            {% endif %}
+                                        </dd>
+                                    </div>
+                                    {% endfor %}
+                                </dl>
+                                {% endif %}
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                </section>
+                {% else %}
+                <p class="small-note">No automation events have been recorded for this work item yet.</p>
+                {% endif %}
+
             </div>
         </details>
         </div>
