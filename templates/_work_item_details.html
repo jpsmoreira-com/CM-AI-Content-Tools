@@ -357,6 +357,9 @@
                     <h4>Description</h4>
                     {% if item.parent_description_rendered_html %}
                     <div class="rich-work-item-html">{{ item.parent_description_rendered_html | safe }}</div>
+                    {% elif item.parent_repro_steps_rendered_html %}
+                    <p class="small-note">Sourced from the parent work item's Repro Steps field.</p>
+                    <div class="rich-work-item-html">{{ item.parent_repro_steps_rendered_html | safe }}</div>
                     {% else %}
                     <p class="small-note">No description was provided on the parent work item.</p>
                     {% endif %}
@@ -369,7 +372,7 @@
                 </section>
                 {% endif %}
 
-                {% if item.parent_repro_steps_rendered_html %}
+                {% if item.parent_repro_steps_rendered_html and item.parent_description_rendered_html %}
                 <section class="rich-work-item-section">
                     <h4>Repro Steps</h4>
                     <div class="rich-work-item-html">{{ item.parent_repro_steps_rendered_html | safe }}</div>
