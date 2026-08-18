@@ -1886,7 +1886,7 @@ def read_agent_provider_status(
         except json.JSONDecodeError:
             bridge_status = {}
         status_value = str(bridge_status.get("status") or "").strip().lower()
-        if status_value in {"awaiting_copilot_access", "consent_required"}:
+        if status_value in {"awaiting_copilot_access", "consent_required", "waiting_for_model"}:
             message = (
                 "Waiting for the one-time VS Code Copilot authorization for the Content AI Pipeline Bridge. "
                 "Select Allow in VS Code; the queued job will resume automatically."

@@ -258,7 +258,7 @@ These names are still useful as a conceptual workflow vocabulary, but the curren
 - [Done] Add CM GPT handoff and launch support through VS Code Copilot custom-agent and CLI workflow.
 - [Done] Add WSL UNC path normalization and richer CM GPT context packaging.
 - [Done] Add short-lived dashboard caching and lighter TFS read paths to reduce repeated page-load latency.
-- [Done] Add configurable VS Code handoff window behavior.
+- [Done] Add configurable VS Code handoff window behavior, including a non-blocking dedicated-window request and explicit Copilot authorization/model-wait states.
 - [Done] Add durable automatic-flow resumption with a background runner and standalone worker entrypoint.
 - [Done] Add optional continuous discovery mode for current-iteration work items.
 - [Done] Add formal PR-to-work-item linking, preferring the parent work item when available.
@@ -932,3 +932,5 @@ Next recommended tasks:
 
 - New installations now default to opening VS Code in a new window for agent handoffs. The bridge job records this request and the bridge extension opens the current remote workspace in a separate VS Code window before processing the task.
 - The VS Code Language Model API requires a user-granted consent decision before an extension can access Copilot models. This approval cannot be bypassed programmatically. The bridge now persists an `awaiting_copilot_access` state while the platform consent UI is pending, rather than silently appearing stalled.
+- Fixed a window-handoff deadlock observed for WI 158015: requesting a new window no longer marks the request as complete and waits forever for a second extension host. The active bridge claims the job, records `running`, and continues processing after requesting the new window. A per-window execution identifier prevents another VS Code window from processing the same job concurrently.
+- Added a `waiting_for_model` bridge state so dashboard polling distinguishes a pending VS Code Copilot authorization/model-selection dialog from normal agent execution.

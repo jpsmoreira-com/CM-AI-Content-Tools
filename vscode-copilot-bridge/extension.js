@@ -17,6 +17,9 @@ let processing = new Set();
 let workspaceRoot;
 let cancellation;
 let copilotAccess = { status: "unknown", models: [] };
+// A bridge job can be visible to more than one VS Code window. This id lets the
+// first extension host claim execution before a newly opened window discovers it.
+const bridgeInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function now() {
   return new Date().toISOString();
@@ -359,27 +362,63 @@ async function runJob(jobUri) {
     }
     const stateUri = packageUri(packagePath, JOB_STATE_FILE);
     const jobState = await readJson(stateUri);
-    if (job.open_new_window && !jobState.window_opened) {
-      await writeJson(stateUri, {
-        status: "opening_new_window",
-        window_opened: true,
-        requested_at: now(),
-        branch_name: String(job.branch_name || ""),
-      });
-      await writeBridgeStatus("opening_new_window", { branch_name: String(job.branch_name || "") });
-      log(`Opening a new VS Code window for ${job.branch_name || "the queued job"}.`);
-      await vscode.commands.executeCommand("vscode.openFolder", workspaceRoot, { forceNewWindow: true });
-      return;
-    }
     const branch = String(job.branch_name || "");
     if (!branch) {
       throw new Error("Queued bridge job does not contain a branch name.");
     }
-    await writeJson(packageUri(packagePath, JOB_STATE_FILE), { status: "running", started_at: now(), branch_name: branch });
-    await writeBridgeStatus("running", { branch_name: branch, job_path: jobUri.fsPath });
+
+    if (jobState.status === "running" && jobState.executor_id && jobState.executor_id !== bridgeInstanceId) {
+      log(`Job for ${branch} is already being executed by another VS Code window.`);
+      return;
+    }
+
+    if (job.open_new_window && !jobState.window_open_requested) {
+      await writeJson(stateUri, {
+        status: "opening_new_window",
+        window_open_requested: true,
+        requested_at: now(),
+        branch_name: branch,
+      });
+      await writeBridgeStatus("opening_new_window", { branch_name: branch });
+      log(`Requesting a new VS Code window for ${branch}.`);
+      try {
+        await vscode.commands.executeCommand("vscode.openFolder", workspaceRoot, {
+          forceNewWindow: true,
+          forceReuseWindow: false,
+        });
+      } catch (openError) {
+        const message = openError instanceof Error ? openError.message : String(openError);
+        log(`Could not open a separate VS Code window: ${message}. Continuing through the active bridge window.`);
+      }
+    }
+
+    await writeJson(stateUri, {
+      status: "running",
+      started_at: now(),
+      branch_name: branch,
+      executor_id: bridgeInstanceId,
+      window_open_requested: Boolean(job.open_new_window || jobState.window_open_requested || jobState.window_opened),
+    });
+    await writeBridgeStatus("running", {
+      branch_name: branch,
+      job_path: jobUri.fsPath,
+      executor_id: bridgeInstanceId,
+      detail: "The VS Code Copilot bridge is processing the queued work item.",
+    });
     log(`Running bridge job for ${branch}.`);
 
+    await writeBridgeStatus("waiting_for_model", {
+      branch_name: branch,
+      detail: "Waiting for VS Code Copilot to authorize and provide the configured language model.",
+    });
     const model = await selectConfiguredModel(job.model_name);
+    await writeBridgeStatus("running", {
+      branch_name: branch,
+      job_path: jobUri.fsPath,
+      executor_id: bridgeInstanceId,
+      model: describeModel(model),
+      detail: "The VS Code Copilot bridge is processing the queued work item.",
+    });
     const context = await collectPackageContext(packagePath);
     const instructionIndex = context.extras.find((item) => item.path === "repo-instructions/index.md");
     const instructionFilesRead = instructionIndex ? instructionPathsFromIndex(instructionIndex.content) : [];
