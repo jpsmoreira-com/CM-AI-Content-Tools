@@ -1270,9 +1270,9 @@ def _prepare_isolated_vscode_bridge_worktree(
             '  mkdir -p "$worktree_root"',
             '  git -C "$source_path" fetch origin "$branch_name" --prune',
             '  if git -C "$source_path" show-ref --verify --quiet "refs/heads/$branch_name"; then',
-            '    git -C "$source_path" worktree add --force "$target_path" "$branch_name"',
+            '    git -C "$source_path" worktree add --force "$target_path" "$branch_name" >&2',
             '  else',
-            '    git -C "$source_path" worktree add -b "$branch_name" "$target_path" "origin/$branch_name"',
+            '    git -C "$source_path" worktree add -b "$branch_name" "$target_path" "origin/$branch_name" >&2',
             '  fi',
             'fi',
             'printf "%s" "$target_path"',
@@ -1285,7 +1285,10 @@ def _prepare_isolated_vscode_bridge_worktree(
             or result.stdout.strip()
             or f"Failed to prepare an isolated VS Code worktree for '{clean_branch}'."
         )
-    target_path = result.stdout.strip().replace("\\", "/").rstrip("/")
+    # Git writes informational worktree messages to stdout on some versions.
+    # The final emitted line is the only contract value: the worktree path.
+    target_path = (result.stdout.splitlines()[-1] if result.stdout.splitlines() else "").strip()
+    target_path = target_path.replace("\\", "/").rstrip("/")
     if not target_path:
         raise CopilotIntegrationError("The isolated VS Code worktree path could not be resolved.")
     return target_path
