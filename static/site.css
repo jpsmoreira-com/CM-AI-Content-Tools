@@ -1016,8 +1016,11 @@ button[disabled] {
     overflow: hidden;
 }
 
-.parent-work-item-context {
-    grid-column: 2;
+.detail-accordion-column {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1rem;
 }
 
 .detail-disclosure summary {
@@ -1862,10 +1865,6 @@ details p {
 
     .detail-panel-wide {
         grid-column: span 1;
-    }
-
-    .parent-work-item-context {
-        grid-column: auto;
     }
 
     .summary-toggle {
