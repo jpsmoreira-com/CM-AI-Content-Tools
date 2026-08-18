@@ -99,7 +99,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "copilot_reference_docs_path": "/workspaces/Documentation",
     "copilot_strict_model_safety": False,
     "copilot_open_wsl_remote": True,
-    "copilot_vscode_window_mode": "reuse",
+    "copilot_vscode_window_mode": "new",
     "copilot_vscode_apply_settings": True,
     "copilot_vscode_settings_path": str(VS_CODE_SETTINGS_PATH),
     "copilot_vscode_permission_level": "autopilot",

@@ -927,3 +927,8 @@ Next recommended tasks:
 - Parent rich HTML uses the same sanitization and TFS asset proxy as the task context. The dashboard list remains fast because no extra parent data is requested until a user opens a work item card.
 - Parent fields are explicitly requested from the TFS batch API, avoiding dependence on the API default field set when rendering parent descriptions. TFS does not permit `fields` and `Relations` in one batch request, so parent fields and relations are fetched separately and combined locally.
 - TFS Bug work items can store their substantive context in `Microsoft.VSTS.TCM.ReproSteps` instead of `System.Description`. The parent panel treats Repro Steps as a labeled description fallback and avoids rendering the same content twice.
+
+2026-08-18 VS Code Copilot bridge window and consent handling:
+
+- New installations now default to opening VS Code in a new window for agent handoffs. The bridge job records this request and the bridge extension opens the current remote workspace in a separate VS Code window before processing the task.
+- The VS Code Language Model API requires a user-granted consent decision before an extension can access Copilot models. This approval cannot be bypassed programmatically. The bridge now persists an `awaiting_copilot_access` state while the platform consent UI is pending, rather than silently appearing stalled.

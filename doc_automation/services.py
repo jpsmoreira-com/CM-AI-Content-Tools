@@ -4412,6 +4412,24 @@ class AutomationService:
                     "result_path": result_path,
                     "provider_log_tail": str(provider_status.get("tail") or ""),
                 }
+            if provider_status.get("waiting_for_user_action"):
+                wait_message = str(provider_status.get("error") or "Waiting for VS Code Copilot authorization.")
+                mark_agent_result(
+                    portal=portal_name,
+                    work_item_id=work_item_id,
+                    agent_result_status="waiting",
+                    agent_result_path=result_path,
+                    agent_result_error=wait_message,
+                )
+                return {
+                    **result,
+                    "status": "waiting",
+                    "green_light": False,
+                    "error": wait_message,
+                    "changed_files": [],
+                    "result_path": result_path,
+                    "provider_log_tail": str(provider_status.get("tail") or ""),
+                }
 
         skip_pipeline_validation = (
             bool(current_item.get("has_pr"))

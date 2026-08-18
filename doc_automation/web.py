@@ -626,7 +626,7 @@ def save_runtime_settings(
     copilot_reference_docs_path: str = Form("/workspaces/Documentation"),
     copilot_strict_model_safety: bool = Form(False),
     copilot_open_wsl_remote: bool = Form(False),
-    copilot_vscode_window_mode: str = Form("reuse"),
+    copilot_vscode_window_mode: str = Form("new"),
     copilot_vscode_apply_settings: bool = Form(False),
     copilot_vscode_settings_path: str = Form(""),
     copilot_vscode_permission_level: str = Form("autopilot"),

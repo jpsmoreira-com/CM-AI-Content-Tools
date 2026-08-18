@@ -70,6 +70,14 @@ async function writeJson(uri, value) {
   await vscode.workspace.fs.rename(temporary, uri, { overwrite: true });
 }
 
+async function readJson(uri) {
+  try {
+    return JSON.parse(await readText(uri, MAX_FILE_BYTES));
+  } catch {
+    return {};
+  }
+}
+
 function log(message) {
   output.appendLine(`[${now()}] ${message}`);
 }
@@ -133,6 +141,10 @@ async function selectConfiguredModel(requestedName) {
 
 async function checkCopilotAccess() {
   try {
+    copilotAccess = { status: "awaiting_copilot_access", models: [] };
+    await writeBridgeStatus("awaiting_copilot_access", {
+      detail: "Waiting for VS Code Copilot language-model authorization when required.",
+    });
     const models = await vscode.lm.selectChatModels({ vendor: "copilot" });
     copilotAccess = { status: "ready", models: models.map(describeModel) };
     await writeBridgeStatus("ready", {
@@ -344,6 +356,20 @@ async function runJob(jobUri) {
     const expectedWorkspace = String(job.workspace_path || "");
     if (expectedWorkspace && expectedWorkspace !== workspaceRoot.fsPath) {
       throw new Error(`Queued job targets '${expectedWorkspace}', but the active workspace is '${workspaceRoot.fsPath}'.`);
+    }
+    const stateUri = packageUri(packagePath, JOB_STATE_FILE);
+    const jobState = await readJson(stateUri);
+    if (job.open_new_window && !jobState.window_opened) {
+      await writeJson(stateUri, {
+        status: "opening_new_window",
+        window_opened: true,
+        requested_at: now(),
+        branch_name: String(job.branch_name || ""),
+      });
+      await writeBridgeStatus("opening_new_window", { branch_name: String(job.branch_name || "") });
+      log(`Opening a new VS Code window for ${job.branch_name || "the queued job"}.`);
+      await vscode.commands.executeCommand("vscode.openFolder", workspaceRoot, { forceNewWindow: true });
+      return;
     }
     const branch = String(job.branch_name || "");
     if (!branch) {

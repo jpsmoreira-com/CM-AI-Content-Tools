@@ -584,6 +584,7 @@ def _queue_vscode_bridge_job(
     model_name: str,
     prompt_path: str,
     agent_result_path: str,
+    open_new_window: bool,
 ) -> Dict[str, Any]:
     """Queue a durable VS Code Language Model job for the workspace bridge extension."""
     job_path = f"{package_directory}/bridge-job.json"
@@ -599,6 +600,7 @@ def _queue_vscode_bridge_job(
         "model_name": model_name,
         "prompt_path": prompt_path,
         "agent_result_path": agent_result_path,
+        "open_new_window": bool(open_new_window),
     }
     _remove_file_via_wsl(distro, agent_result_path)
     _remove_file_via_wsl(distro, state_path)
@@ -1878,6 +1880,34 @@ def read_agent_provider_status(
         }
 
     tail = str(log_result.stdout or "").strip()
+    if clean_log_path.endswith(VSCODE_BRIDGE_STATUS_FILE) and tail:
+        try:
+            bridge_status = json.loads(tail)
+        except json.JSONDecodeError:
+            bridge_status = {}
+        status_value = str(bridge_status.get("status") or "").strip().lower()
+        if status_value in {"awaiting_copilot_access", "consent_required"}:
+            message = (
+                "Waiting for the one-time VS Code Copilot authorization for the Content AI Pipeline Bridge. "
+                "Select Allow in VS Code; the queued job will resume automatically."
+            )
+            return {
+                "running": True,
+                "has_log": True,
+                "terminal_error": False,
+                "waiting_for_user_action": True,
+                "error": message,
+                "tail": tail,
+            }
+        if status_value == "opening_new_window":
+            return {
+                "running": True,
+                "has_log": True,
+                "terminal_error": False,
+                "waiting_for_user_action": False,
+                "error": "Opening a dedicated VS Code window for the queued agent job.",
+                "tail": tail,
+            }
     if running or not tail:
         return {
             "running": running,
@@ -1910,7 +1940,7 @@ def read_agent_provider_status(
     return {
         "running": False,
         "has_log": True,
-        "terminal_error": True,
+        "terminal_error": terminal_error,
         "error": error,
         "tail": tail,
     }
@@ -2613,6 +2643,7 @@ def prepare_cm_gpt_handoff(
                 model_name=clean_model_name,
                 prompt_path=prompt_path,
                 agent_result_path=agent_result_path,
+                open_new_window=str(vscode_window_mode or "").strip() == "new",
             )
         else:
             launch_metadata = _launch_vscode_chat_from_windows(
