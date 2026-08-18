@@ -919,3 +919,10 @@ Next recommended tasks:
 - Added bridge installation to both the regular and prebuilt-image devcontainer bootstrap paths. The bootstrap copies the bridge into the VS Code Server extensions folder and uses the Remote CLI to register its VSIX when that CLI socket is available; the copied extension remains available after the next remote reconnect.
 - Important platform constraint: VS Code may require a one-time signed-in-user consent dialog before any extension can invoke Copilot through the public Language Model API. This is not bypassed. Once granted, the bridge can execute queued jobs without an item-by-item manual chat handoff.
 - Next validation: rebuild/reopen the target devcontainer, confirm bridge preflight in Settings, then run one real WI with `vscode_bridge` and the approved configured Copilot model. Confirm the job produces `agent-result.json`, passes dashboard validation, and continues through push and Draft PR creation.
+
+2026-08-17 Parent work item dashboard context:
+
+- Detail loading already retrieves the parent work item lazily from TFS. Extended that payload to retain the parent title, state, description, acceptance criteria, repro steps, attachments, hyperlinks, and web URL.
+- Added a collapsed `Parent Work Item Context` disclosure between the task context and branch/review controls. It shows the linked parent identifier, title, state, rich description, optional criteria/repro steps, and parent references/images.
+- Parent rich HTML uses the same sanitization and TFS asset proxy as the task context. The dashboard list remains fast because no extra parent data is requested until a user opens a work item card.
+- Parent fields are explicitly requested from the TFS batch API, avoiding dependence on the API default field set when rendering parent descriptions.

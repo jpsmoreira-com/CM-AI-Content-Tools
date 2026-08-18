@@ -320,6 +320,89 @@
             </div>
         </details>
 
+        {% if item.parent_id %}
+        <details class="detail-disclosure parent-work-item-context">
+            <summary>
+                <span>Parent Work Item Context</span>
+                <small>{{ item.parent_type or "Work item" }} {{ item.parent_id }}</small>
+            </summary>
+            <div class="detail-disclosure-body">
+                <section>
+                    <h4>Parent</h4>
+                    <dl class="detail-status-list">
+                        <div>
+                            <dt>Work Item</dt>
+                            <dd>
+                                {% if item.parent_url %}
+                                <a href="{{ item.parent_url }}" target="_blank" rel="noreferrer noopener">{{ item.parent_type or "Work item" }} {{ item.parent_id }}</a>
+                                {% else %}
+                                {{ item.parent_type or "Work item" }} {{ item.parent_id }}
+                                {% endif %}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Title</dt>
+                            <dd>{{ item.parent_title or "Parent details could not be resolved from TFS." }}</dd>
+                        </div>
+                        {% if item.parent_state %}
+                        <div>
+                            <dt>State</dt>
+                            <dd>{{ item.parent_state }}</dd>
+                        </div>
+                        {% endif %}
+                    </dl>
+                </section>
+
+                <section class="rich-work-item-section">
+                    <h4>Description</h4>
+                    {% if item.parent_description_rendered_html %}
+                    <div class="rich-work-item-html">{{ item.parent_description_rendered_html | safe }}</div>
+                    {% else %}
+                    <p class="small-note">No description was provided on the parent work item.</p>
+                    {% endif %}
+                </section>
+
+                {% if item.parent_acceptance_rendered_html %}
+                <section class="rich-work-item-section">
+                    <h4>Acceptance Criteria</h4>
+                    <div class="rich-work-item-html">{{ item.parent_acceptance_rendered_html | safe }}</div>
+                </section>
+                {% endif %}
+
+                {% if item.parent_repro_steps_rendered_html %}
+                <section class="rich-work-item-section">
+                    <h4>Repro Steps</h4>
+                    <div class="rich-work-item-html">{{ item.parent_repro_steps_rendered_html | safe }}</div>
+                </section>
+                {% endif %}
+
+                {% if item.parent_attachment_links or item.parent_hyperlink_links %}
+                <section class="rich-work-item-section">
+                    <h4>References</h4>
+                    {% if item.parent_image_attachment_links %}
+                    <div class="attachment-preview-grid">
+                        {% for attachment in item.parent_image_attachment_links %}
+                        <a href="{{ attachment.url }}" target="_blank" rel="noreferrer noopener" class="attachment-preview">
+                            <img src="{{ attachment.proxy_url }}" alt="{{ attachment.name }}">
+                            <span>{{ attachment.name }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="reference-link-list">
+                        {% for attachment in item.parent_attachment_links %}
+                        <a href="{{ attachment.url }}" target="_blank" rel="noreferrer noopener">{{ attachment.name }}</a>
+                        {% endfor %}
+                        {% for link in item.parent_hyperlink_links %}
+                        <a href="{{ link.url }}" target="_blank" rel="noreferrer noopener">{{ link.name }}</a>
+                        {% endfor %}
+                    </div>
+                </section>
+                {% endif %}
+            </div>
+        </details>
+        {% endif %}
+
         <details class="detail-disclosure">
             <summary>
                 <span>Branch &amp; Review</span>

@@ -1016,6 +1016,10 @@ button[disabled] {
     overflow: hidden;
 }
 
+.parent-work-item-context {
+    grid-column: 2;
+}
+
 .detail-disclosure summary {
     display: flex;
     align-items: center;
@@ -1858,6 +1862,10 @@ details p {
 
     .detail-panel-wide {
         grid-column: span 1;
+    }
+
+    .parent-work-item-context {
+        grid-column: auto;
     }
 
     .summary-toggle {

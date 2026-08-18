@@ -790,10 +790,17 @@ Order By [System.ChangedDate] Desc
                     "parent_id": None,
                     "parent_type": "",
                     "parent_title": "",
+                    "parent_state": "",
+                    "parent_description_html": "",
+                    "parent_acceptance_criteria_html": "",
+                    "parent_repro_steps_html": "",
+                    "parent_url": "",
                     "pull_request_links": [],
                     "parent_pull_request_links": [],
                     "attachment_links": [],
                     "hyperlink_links": [],
+                    "parent_attachment_links": [],
+                    "parent_hyperlink_links": [],
                 }
             )
         return items
@@ -835,7 +842,7 @@ Order By [System.ChangedDate] Desc
 
         parent_rows = self.get_work_items_batch(
             parent_ids,
-            None,
+            fields,
             expand="Relations",
         )
         parents = {int(row["id"]): row for row in parent_rows if row.get("id")}
@@ -862,6 +869,12 @@ Order By [System.ChangedDate] Desc
             )
             attachment_links = extract_attachment_relations(row.get("relations", []) or [])
             hyperlink_links = extract_hyperlink_relations(row.get("relations", []) or [])
+            parent_attachment_links = extract_attachment_relations(
+                (parent_row or {}).get("relations", []) or []
+            )
+            parent_hyperlink_links = extract_hyperlink_relations(
+                (parent_row or {}).get("relations", []) or []
+            )
             assigned_to = parse_identity(field_map.get("System.AssignedTo"))
             items.append(
                 {
@@ -881,10 +894,25 @@ Order By [System.ChangedDate] Desc
                     "parent_id": parent_id,
                     "parent_type": str(parent_fields.get("System.WorkItemType", "")).strip(),
                     "parent_title": str(parent_fields.get("System.Title", "")).strip(),
+                    "parent_state": str(parent_fields.get("System.State", "")).strip(),
+                    "parent_description_html": str(parent_fields.get("System.Description", "") or ""),
+                    "parent_acceptance_criteria_html": str(
+                        parent_fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", "") or ""
+                    ),
+                    "parent_repro_steps_html": str(
+                        parent_fields.get("Microsoft.VSTS.TCM.ReproSteps", "") or ""
+                    ),
+                    "parent_url": (
+                        build_work_item_web_url(self.base_url, self.project, parent_id)
+                        if parent_id
+                        else ""
+                    ),
                     "pull_request_links": pull_request_links,
                     "parent_pull_request_links": parent_pull_request_links,
                     "attachment_links": attachment_links,
                     "hyperlink_links": hyperlink_links,
+                    "parent_attachment_links": parent_attachment_links,
+                    "parent_hyperlink_links": parent_hyperlink_links,
                 }
             )
         return items

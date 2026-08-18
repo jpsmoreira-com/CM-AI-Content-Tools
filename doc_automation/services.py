@@ -2005,6 +2005,10 @@ class AutomationService:
         acceptance_html = str(work_item.get("acceptance_criteria_html") or "")
         repro_steps_html = str(work_item.get("repro_steps_html") or "")
         attachment_links = list(work_item.get("attachment_links", []) or [])
+        parent_description_html = str(work_item.get("parent_description_html") or "")
+        parent_acceptance_html = str(work_item.get("parent_acceptance_criteria_html") or "")
+        parent_repro_steps_html = str(work_item.get("parent_repro_steps_html") or "")
+        parent_attachment_links = list(work_item.get("parent_attachment_links", []) or [])
         copilot_status = str((state or {}).get("copilot_status") or "")
         copilot_error = str((state or {}).get("copilot_error") or "")
         if copilot_status.strip().lower() == "desktop_prepared" and not copilot_error:
@@ -2075,6 +2079,24 @@ class AutomationService:
                 portal_name=portal["repository"],
             ),
             "image_attachment_links": prepare_image_attachment_links(portal["repository"], attachment_links),
+            "parent_description_rendered_html": sanitize_work_item_html(
+                parent_description_html,
+                base_url=portal["base_url"],
+                portal_name=portal["repository"],
+            ),
+            "parent_acceptance_rendered_html": sanitize_work_item_html(
+                parent_acceptance_html,
+                base_url=portal["base_url"],
+                portal_name=portal["repository"],
+            ),
+            "parent_repro_steps_rendered_html": sanitize_work_item_html(
+                parent_repro_steps_html,
+                base_url=portal["base_url"],
+                portal_name=portal["repository"],
+            ),
+            "parent_image_attachment_links": prepare_image_attachment_links(
+                portal["repository"], parent_attachment_links
+            ),
             "linked_work_item_prs": list(work_item.get("pull_request_links", []) or []),
             "linked_parent_prs": list(work_item.get("parent_pull_request_links", []) or []),
             "pr_source_branch": "",
