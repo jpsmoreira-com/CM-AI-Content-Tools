@@ -1150,6 +1150,64 @@ def summarize_automation_stage(item: Dict[str, Any]) -> str:
     return "Plan branch"
 
 
+def build_agent_result_guidance(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate stored agent diagnostics into an operational dashboard outcome."""
+    status = str(item.get("agent_result_status") or "").strip().lower()
+    error = str(item.get("agent_result_error") or "").strip()
+    summary = str(item.get("agent_result_summary") or "").strip()
+    if not status and not error:
+        return {}
+
+    if status == "needs_agent_fix":
+        blockers: List[str] = []
+        lower_error = error.lower()
+        lower_summary = summary.lower()
+        no_change = "did not give green light" in lower_error or "no accurate documentation change" in lower_summary
+        if no_change:
+            blockers.append("The agent did not identify a safe documentation update, so no changes were pushed.")
+        if "instruction_files_read" in lower_error:
+            blockers.append("The returned report did not confirm the repository instructions required by the pipeline.")
+        if "automation context path" in lower_error:
+            blockers.append("The returned report included an internal automation file instead of only repository changes.")
+        if "workspace is on branch" in lower_error:
+            blockers.append("The automatic repair could not start because the configured workspace changed to a different branch.")
+        if not blockers:
+            blockers.append("The agent result did not meet the validation requirements for an automatic push.")
+        return {
+            "level": "warning",
+            "title": "Agent run completed, but no safe update is ready to publish",
+            "summary": summary or "The result needs correction before the pipeline can continue.",
+            "blockers": blockers,
+            "next_steps": [
+                "Review the final report and captured work item context.",
+                "Keep the target workspace on the planned work-item branch before rerunning the agent.",
+                "Rerun only after the required documentation evidence or implementation context is available.",
+            ],
+            "technical_details": error,
+        }
+
+    if status in {"blocked", "invalid", "error"}:
+        return {
+            "level": "error",
+            "title": "Agent execution needs attention",
+            "summary": summary or "The agent result cannot be used to continue the pipeline.",
+            "blockers": ["No changes were pushed and no Draft PR was created."],
+            "next_steps": ["Review the technical details, correct the reported issue, and rerun the agent."],
+            "technical_details": error,
+        }
+
+    if status == "waiting" and error:
+        return {
+            "level": "info",
+            "title": "Agent action is pending",
+            "summary": error,
+            "blockers": [],
+            "next_steps": [],
+            "technical_details": "",
+        }
+    return {}
+
+
 def is_auto_flow_active(item: Dict[str, Any]) -> bool:
     if not bool(item.get("auto_flow_enabled")) or bool(item.get("has_pr")):
         return False
@@ -2016,6 +2074,16 @@ class AutomationService:
                 "Microsoft 365 Copilot Desktop handoffs are no longer treated as pipeline progress. "
                 "Rerun with an automation-capable provider."
             )
+        agent_result_status = str((state or {}).get("agent_result_status") or "")
+        agent_result_summary = str((state or {}).get("agent_result_summary") or "")
+        agent_result_error = str((state or {}).get("agent_result_error") or "")
+        agent_result_guidance = build_agent_result_guidance(
+            {
+                "agent_result_status": agent_result_status,
+                "agent_result_summary": agent_result_summary,
+                "agent_result_error": agent_result_error,
+            }
+        )
 
         return {
             **work_item,
@@ -2042,10 +2110,11 @@ class AutomationService:
             "copilot_process_id": str((state or {}).get("copilot_process_id") or ""),
             "copilot_prepared_at": str((state or {}).get("copilot_prepared_at") or ""),
             "copilot_auto_launch": bool(runtime_settings.get("copilot_auto_launch")),
-            "agent_result_status": str((state or {}).get("agent_result_status") or ""),
+            "agent_result_status": agent_result_status,
             "agent_result_path": str((state or {}).get("agent_result_path") or ""),
-            "agent_result_summary": str((state or {}).get("agent_result_summary") or ""),
-            "agent_result_error": str((state or {}).get("agent_result_error") or ""),
+            "agent_result_summary": agent_result_summary,
+            "agent_result_error": agent_result_error,
+            "agent_result_guidance": agent_result_guidance,
             "agent_result_checked_at": str((state or {}).get("agent_result_checked_at") or ""),
             "agent_repair_count": int((state or {}).get("agent_repair_count") or 0),
             "agent_repair_last_started_at": str((state or {}).get("agent_repair_last_started_at") or ""),

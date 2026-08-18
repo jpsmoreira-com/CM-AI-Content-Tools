@@ -229,11 +229,45 @@
 
                 {% if item.branch_error or item.copilot_error or item.agent_result_error or item.push_error or item.pr_error %}
                 <section>
-                    <h4>Errors</h4>
+                    <h4>Automation Outcome</h4>
                     <div class="stack compact">
                         {% if item.branch_error %}<span class="status-error">{{ item.branch_error }}</span>{% endif %}
                         {% if item.copilot_error %}<span class="status-error">{{ item.copilot_error }}</span>{% endif %}
-                        {% if item.agent_result_error %}<span class="status-error">{{ item.agent_result_error }}</span>{% endif %}
+                        {% if item.agent_result_guidance %}
+                        <article class="automation-guidance is-{{ item.agent_result_guidance.level }}">
+                            <p class="automation-guidance-label">Pipeline decision</p>
+                            <h5>{{ item.agent_result_guidance.title }}</h5>
+                            <p>{{ item.agent_result_guidance.summary }}</p>
+                            {% if item.agent_result_guidance.blockers %}
+                            <div>
+                                <strong>What blocked progression</strong>
+                                <ul>
+                                    {% for blocker in item.agent_result_guidance.blockers %}
+                                    <li>{{ blocker }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if item.agent_result_guidance.next_steps %}
+                            <div>
+                                <strong>Recommended next steps</strong>
+                                <ol>
+                                    {% for step in item.agent_result_guidance.next_steps %}
+                                    <li>{{ step }}</li>
+                                    {% endfor %}
+                                </ol>
+                            </div>
+                            {% endif %}
+                            {% if item.agent_result_guidance.technical_details %}
+                            <details class="technical-details">
+                                <summary>Technical details</summary>
+                                <pre>{{ item.agent_result_guidance.technical_details }}</pre>
+                            </details>
+                            {% endif %}
+                        </article>
+                        {% elif item.agent_result_error %}
+                        <span class="status-error">{{ item.agent_result_error }}</span>
+                        {% endif %}
                         {% if item.push_error %}<span class="status-error">{{ item.push_error }}</span>{% endif %}
                         {% if item.pr_error %}<span class="status-error">{{ item.pr_error }}</span>{% endif %}
                     </div>
