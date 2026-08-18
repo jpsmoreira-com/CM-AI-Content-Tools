@@ -840,12 +840,28 @@ Order By [System.ChangedDate] Desc
                 if parent_id and parent_id not in parent_ids:
                     parent_ids.append(parent_id)
 
-        parent_rows = self.get_work_items_batch(
+        parent_field_rows = self.get_work_items_batch(
             parent_ids,
             fields,
+            expand=None,
+        )
+        parent_relation_rows = self.get_work_items_batch(
+            parent_ids,
+            None,
             expand="Relations",
         )
-        parents = {int(row["id"]): row for row in parent_rows if row.get("id")}
+        parent_relations_by_id = {
+            int(row["id"]): list(row.get("relations", []) or [])
+            for row in parent_relation_rows
+            if row.get("id")
+        }
+        parents: Dict[int, Dict[str, Any]] = {}
+        for row in parent_field_rows:
+            if not row.get("id"):
+                continue
+            parent_row = dict(row)
+            parent_row["relations"] = parent_relations_by_id.get(int(row["id"]), [])
+            parents[int(row["id"])] = parent_row
 
         items: List[Dict[str, Any]] = []
         for work_item_id in ordered_ids:

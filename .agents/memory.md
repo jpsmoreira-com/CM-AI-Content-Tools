@@ -925,4 +925,4 @@ Next recommended tasks:
 - Detail loading already retrieves the parent work item lazily from TFS. Extended that payload to retain the parent title, state, description, acceptance criteria, repro steps, attachments, hyperlinks, and web URL.
 - Added a collapsed `Parent Work Item Context` disclosure between the task context and branch/review controls. It shows the linked parent identifier, title, state, rich description, optional criteria/repro steps, and parent references/images.
 - Parent rich HTML uses the same sanitization and TFS asset proxy as the task context. The dashboard list remains fast because no extra parent data is requested until a user opens a work item card.
-- Parent fields are explicitly requested from the TFS batch API, avoiding dependence on the API default field set when rendering parent descriptions.
+- Parent fields are explicitly requested from the TFS batch API, avoiding dependence on the API default field set when rendering parent descriptions. TFS does not permit `fields` and `Relations` in one batch request, so parent fields and relations are fetched separately and combined locally.
