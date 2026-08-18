@@ -4687,6 +4687,10 @@ class AutomationService:
         if current_item.get("has_pr"):
             raise ServiceError(f"WI {work_item_id} already has an associated PR.")
 
+        credential_preflight = _check_git_credentials_for_portal(portal)
+        if not bool(credential_preflight.get("ok")):
+            raise ServiceError(str(credential_preflight.get("message") or "Git credential preflight failed."))
+
         agent_result = self.check_agent_result(portal_name=portal_name, work_item_id=work_item_id)
         if not agent_result.get("green_light"):
             raise ServiceError(str(agent_result.get("error") or "The agent result is not green-lighted yet."))

@@ -322,6 +322,22 @@ async function applyChanges(changes) {
   return changedFiles;
 }
 
+function instructionEntriesFromIndex(indexText) {
+  const entries = [];
+  for (const line of String(indexText || "").split(/\r?\n/)) {
+    const match = line.match(/^\|\s*`?([^`|]+?)`?\s*\|\s*`?([^`|]+?)`?\s*\|\s*$/);
+    if (!match || match[1].trim().toLowerCase() === "original path") {
+      continue;
+    }
+    const originalPath = match[1].trim();
+    const packagedPath = match[2].trim();
+    if (originalPath && packagedPath) {
+      entries.push({ originalPath, packagedPath });
+    }
+  }
+  return entries;
+}
+
 async function collectPackageContext(packagePath) {
   const promptUri = packageUri(packagePath, "prompt.md");
   const prompt = await readText(promptUri, 240_000);
@@ -338,18 +354,23 @@ async function collectPackageContext(packagePath) {
       extras.push({ path: relativePath, content: await readText(uri, MAX_FILE_BYTES) });
     }
   }
-  return { prompt, extras };
+  const instructionIndex = extras.find((item) => item.path === "repo-instructions/index.md");
+  const instructionEntries = instructionIndex ? instructionEntriesFromIndex(instructionIndex.content) : [];
+  for (const entry of instructionEntries.slice(0, 32)) {
+    const uri = packageUri(packagePath, entry.packagedPath);
+    if (await pathExists(uri)) {
+      extras.push({ path: entry.packagedPath, content: await readText(uri, MAX_FILE_BYTES) });
+    }
+  }
+  return { prompt, extras, instructionEntries };
 }
 
 function instructionPathsFromIndex(indexText) {
-  const paths = [];
-  for (const line of String(indexText || "").split(/\r?\n/)) {
-    const match = line.match(/(?:Source|Original)\s*(?:path)?\s*:\s*`?([^`]+?)`?\s*$/i);
-    if (match && match[1] && !paths.includes(match[1].trim())) {
-      paths.push(match[1].trim());
-    }
-  }
-  return paths;
+  return instructionEntriesFromIndex(indexText).map((entry) => entry.originalPath);
+}
+
+function isAutomationArtifact(path) {
+  return path === ".automation-context" || path.startsWith(".automation-context/");
 }
 
 function agentRequest(context, history) {
@@ -361,7 +382,7 @@ function agentRequest(context, history) {
     "apply: {action:'apply', changes:[{path:'repo/relative/file.md', operation:'replace', old_text:'exact existing text', new_text:'replacement'}]} or operation:'create' with content.",
     "finish: {action:'finish', green_light:true|false, summary:'...', final_report:'...', spec_references:[], validation:[], reviewer_notes:[], prs_reviewed:[], diffs_reviewed:[], work_items_reviewed:[] }.",
     "Read repository instructions and captured evidence before editing. Keep changes minimal and documentation-focused.",
-    "Never request shell commands, network access, Git actions, or edits outside the workspace. Use exact old_text when applying a replacement.",
+    "Never request shell commands, network access, Git actions, or edits outside the workspace. Do not edit .automation-context; the bridge writes the result artifact itself. Use exact old_text when applying a replacement.",
     "If no accurate documentation change is needed, finish with green_light false and explain why.",
   ].join("\n");
   const initial = [
@@ -529,11 +550,12 @@ async function runJob(jobUri) {
         continue;
       }
       if (action === "finish") {
+        const publishableChangedFiles = changedFiles.filter((path) => !isAutomationArtifact(path));
         const result = {
           status: "completed",
-          green_light: Boolean(decision.green_light) && changedFiles.length > 0,
+          green_light: Boolean(decision.green_light) && publishableChangedFiles.length > 0,
           summary: String(decision.summary || "VS Code Copilot bridge completed the job."),
-          changed_files: changedFiles,
+          changed_files: publishableChangedFiles,
           final_report: String(decision.final_report || decision.summary || "No final report was provided by the VS Code Copilot bridge."),
           spec_references: Array.isArray(decision.spec_references) ? decision.spec_references : [],
           validation: Array.isArray(decision.validation) ? decision.validation : [],
@@ -548,9 +570,9 @@ async function runJob(jobUri) {
           completed_at: now(),
         };
         await writeJson(packageUri(packagePath, RESULT_FILE), result);
-        await writeJson(packageUri(packagePath, JOB_STATE_FILE), { status: "completed", completed_at: now(), branch_name: branch, changed_files: changedFiles });
+        await writeJson(packageUri(packagePath, JOB_STATE_FILE), { status: "completed", completed_at: now(), branch_name: branch, changed_files: publishableChangedFiles });
         await writeBridgeStatus("ready", { last_completed_branch: branch, model: describeModel(model) });
-        log(`Completed bridge job for ${branch}; ${changedFiles.length} file(s) changed.`);
+        log(`Completed bridge job for ${branch}; ${publishableChangedFiles.length} publishable file(s) changed.`);
         return;
       }
       throw new Error(`Unsupported bridge action '${action}'.`);
