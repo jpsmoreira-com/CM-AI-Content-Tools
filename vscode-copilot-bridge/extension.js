@@ -185,10 +185,40 @@ function extractJson(text) {
   try {
     return JSON.parse(trimmed);
   } catch {
-    const first = trimmed.indexOf("{");
-    const last = trimmed.lastIndexOf("}");
-    if (first >= 0 && last > first) {
-      return JSON.parse(trimmed.slice(first, last + 1));
+    // Some models add a second JSON object or a short explanation after a valid
+    // action. Find the first complete object instead of parsing from first `{`
+    // through the final `}`, which would combine both responses.
+    for (let start = trimmed.indexOf("{"); start >= 0; start = trimmed.indexOf("{", start + 1)) {
+      let depth = 0;
+      let quoted = false;
+      let escaped = false;
+      for (let index = start; index < trimmed.length; index += 1) {
+        const character = trimmed[index];
+        if (quoted) {
+          if (escaped) {
+            escaped = false;
+          } else if (character === "\\") {
+            escaped = true;
+          } else if (character === '"') {
+            quoted = false;
+          }
+          continue;
+        }
+        if (character === '"') {
+          quoted = true;
+        } else if (character === "{") {
+          depth += 1;
+        } else if (character === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            try {
+              return JSON.parse(trimmed.slice(start, index + 1));
+            } catch {
+              break;
+            }
+          }
+        }
+      }
     }
     throw new Error("The Copilot response was not valid JSON.");
   }
@@ -358,6 +388,43 @@ async function runJob(jobUri) {
     job = JSON.parse(await readText(jobUri));
     const expectedWorkspace = String(job.workspace_path || "");
     if (expectedWorkspace && expectedWorkspace !== workspaceRoot.fsPath) {
+      if (job.dispatch_only) {
+        const stateUri = packageUri(packagePath, JOB_STATE_FILE);
+        const jobState = await readJson(stateUri);
+        if (jobState.status === "dispatched") {
+          return;
+        }
+        const branch = String(job.branch_name || "queued work item");
+        await writeJson(stateUri, {
+          status: "dispatching",
+          branch_name: branch,
+          target_workspace: expectedWorkspace,
+          requested_at: now(),
+        });
+        await writeBridgeStatus("dispatching_new_window", {
+          branch_name: branch,
+          target_workspace: expectedWorkspace,
+          detail: "Opening an isolated VS Code worktree for the queued work item.",
+        });
+        log(`Opening isolated VS Code window for ${branch} at ${expectedWorkspace}.`);
+        const targetWorkspace = workspaceRoot.with({ path: expectedWorkspace });
+        await vscode.commands.executeCommand("vscode.openFolder", targetWorkspace, {
+          forceNewWindow: true,
+          forceReuseWindow: false,
+        });
+        await writeJson(stateUri, {
+          status: "dispatched",
+          branch_name: branch,
+          target_workspace: expectedWorkspace,
+          dispatched_at: now(),
+        });
+        await writeBridgeStatus("waiting_for_isolated_window", {
+          branch_name: branch,
+          target_workspace: expectedWorkspace,
+          detail: "The isolated worktree window was requested. Its bridge will run the queued work item.",
+        });
+        return;
+      }
       throw new Error(`Queued job targets '${expectedWorkspace}', but the active workspace is '${workspaceRoot.fsPath}'.`);
     }
     const stateUri = packageUri(packagePath, JOB_STATE_FILE);

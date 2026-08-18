@@ -585,6 +585,7 @@ def _queue_vscode_bridge_job(
     prompt_path: str,
     agent_result_path: str,
     open_new_window: bool,
+    dispatcher_workspace_path: str = "",
 ) -> Dict[str, Any]:
     """Queue a durable VS Code Language Model job for the workspace bridge extension."""
     job_path = f"{package_directory}/bridge-job.json"
@@ -600,16 +601,39 @@ def _queue_vscode_bridge_job(
         "model_name": model_name,
         "prompt_path": prompt_path,
         "agent_result_path": agent_result_path,
-        "open_new_window": bool(open_new_window),
+        # The target window is opened by a lightweight job in the dispatcher
+        # workspace. Once it opens, this target job must execute there directly.
+        "open_new_window": False,
     }
     _remove_file_via_wsl(distro, agent_result_path)
     _remove_file_via_wsl(distro, state_path)
     _write_file_via_wsl(distro, job_path, json.dumps(job, ensure_ascii=False, indent=2) + "\n")
+    dispatch_workspace = str(dispatcher_workspace_path or "").strip().rstrip("/")
+    if open_new_window and dispatch_workspace and dispatch_workspace != workspace_path:
+        dispatch_slug = branch_name.replace("/", "-")
+        dispatch_directory = f"{dispatch_workspace}/{WORKSPACE_CONTEXT_ROOT}/dispatch-{dispatch_slug}"
+        dispatch_job_path = f"{dispatch_directory}/bridge-job.json"
+        dispatch_state_path = f"{dispatch_directory}/bridge-job-state.json"
+        dispatch_job = {
+            "schema_version": 1,
+            "provider": "vscode_bridge",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "workspace_path": workspace_path,
+            "branch_name": branch_name,
+            "dispatch_only": True,
+            "open_new_window": True,
+        }
+        _remove_file_via_wsl(distro, dispatch_state_path)
+        _write_file_via_wsl(distro, dispatch_job_path, json.dumps(dispatch_job, ensure_ascii=False, indent=2) + "\n")
     return {
         "launch_context": "vscode_bridge",
         "workspace_target": workspace_path,
         "bridge_job_path": job_path,
-        "cli_log_path": status_path,
+        "cli_log_path": (
+            f"{dispatch_workspace}/{WORKSPACE_CONTEXT_ROOT}/{VSCODE_BRIDGE_STATUS_FILE}"
+            if dispatch_workspace
+            else status_path
+        ),
     }
 
 
@@ -1212,6 +1236,59 @@ def _ensure_git_workspace(distro: str, workspace_path: str) -> None:
     )
     if repository_check.returncode != 0 or repository_check.stdout.strip() != "true":
         raise CopilotIntegrationError("The configured workspace path is not a Git repository.")
+
+
+def _prepare_isolated_vscode_bridge_worktree(
+    distro: str,
+    workspace_path: str,
+    branch_name: str,
+) -> str:
+    """Create or reuse a per-branch worktree without moving the dispatcher workspace."""
+    source_path = str(workspace_path or "").strip().rstrip("/")
+    clean_branch = str(branch_name or "").strip()
+    if not source_path or not clean_branch:
+        raise CopilotIntegrationError("An existing workspace path and work branch are required to create an isolated worktree.")
+
+    script = "\n".join(
+        [
+            "set -eu",
+            f"source_path={_shell_quote(source_path)}",
+            f"branch_name={_shell_quote(clean_branch)}",
+            'repository_root="$(git -C \"$source_path\" rev-parse --show-toplevel)"',
+            'repository_name="$(basename \"$repository_root\")"',
+            'branch_slug="$(printf %s \"$branch_name\" | tr "/\\\\ :" "----" | tr -cs "[:alnum:]._-" "-")"',
+            'worktree_root="/workspaces/.content-ai-worktrees/$repository_name"',
+            'target_path="$worktree_root/$branch_slug"',
+            'if [ -d "$target_path" ]; then',
+            '  git -C "$target_path" rev-parse --is-inside-work-tree >/dev/null',
+            '  current_branch="$(git -C "$target_path" branch --show-current)"',
+            '  if [ "$current_branch" != "$branch_name" ]; then',
+            '    printf "Existing isolated worktree %s is on branch %s, expected %s\\n" "$target_path" "$current_branch" "$branch_name" >&2',
+            '    exit 31',
+            '  fi',
+            'else',
+            '  mkdir -p "$worktree_root"',
+            '  git -C "$source_path" fetch origin "$branch_name" --prune',
+            '  if git -C "$source_path" show-ref --verify --quiet "refs/heads/$branch_name"; then',
+            '    git -C "$source_path" worktree add --force "$target_path" "$branch_name"',
+            '  else',
+            '    git -C "$source_path" worktree add -b "$branch_name" "$target_path" "origin/$branch_name"',
+            '  fi',
+            'fi',
+            'printf "%s" "$target_path"',
+        ]
+    )
+    result = _run_wsl_script(distro, script, timeout_seconds=180)
+    if result.returncode != 0:
+        raise CopilotIntegrationError(
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"Failed to prepare an isolated VS Code worktree for '{clean_branch}'."
+        )
+    target_path = result.stdout.strip().replace("\\", "/").rstrip("/")
+    if not target_path:
+        raise CopilotIntegrationError("The isolated VS Code worktree path could not be resolved.")
+    return target_path
 
 
 def _ensure_workspace_context_excluded(distro: str, workspace_path: str) -> None:
@@ -2380,7 +2457,18 @@ def prepare_cm_gpt_handoff(
     effective_distro, clean_workspace_path = normalize_wsl_target_path(workspace_path, distro)
     if not clean_workspace_path:
         raise CopilotIntegrationError("Configure the Copilot workspace path for this portal before launching CM GPT.")
+    dispatcher_workspace_path = clean_workspace_path
     _, normalized_reference_docs_path = normalize_wsl_target_path(reference_docs_path, effective_distro)
+
+    # A Remote VS Code window cannot reliably open a second window for the very
+    # same folder. Give bridge jobs a dedicated worktree instead, so the active
+    # dashboard workspace keeps its branch while the work item runs elsewhere.
+    if clean_provider == "vscode_bridge" and str(vscode_window_mode or "").strip() == "new":
+        clean_workspace_path = _prepare_isolated_vscode_bridge_worktree(
+            effective_distro,
+            clean_workspace_path,
+            clean_branch_name,
+        )
 
     if allow_existing_changes:
         _ensure_git_workspace(effective_distro, clean_workspace_path)
@@ -2644,6 +2732,7 @@ def prepare_cm_gpt_handoff(
                 prompt_path=prompt_path,
                 agent_result_path=agent_result_path,
                 open_new_window=str(vscode_window_mode or "").strip() == "new",
+                dispatcher_workspace_path=dispatcher_workspace_path,
             )
         else:
             launch_metadata = _launch_vscode_chat_from_windows(

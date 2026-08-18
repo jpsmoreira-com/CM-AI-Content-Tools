@@ -1,6 +1,6 @@
 # Project Memory - TFS Documentation Automation MVP
 
-Last updated: 2026-06-23
+Last updated: 2026-08-18
 
 ## Purpose
 
@@ -935,3 +935,11 @@ Next recommended tasks:
 - Fixed a window-handoff deadlock observed for WI 158015: requesting a new window no longer marks the request as complete and waits forever for a second extension host. The active bridge claims the job, records `running`, and continues processing after requesting the new window. A per-window execution identifier prevents another VS Code window from processing the same job concurrently.
 - Added a `waiting_for_model` bridge state so dashboard polling distinguishes a pending VS Code Copilot authorization/model-selection dialog from normal agent execution.
 - Reworked `needs_agent_fix` rendering after WI 158015 exposed raw internal diagnostics in the primary UI. The dashboard now presents a concise pipeline decision, blocking conditions, recommended next steps, and an opt-in technical-details disclosure rather than showing file paths and validation output as the main error message.
+
+2026-08-18 Isolated VS Code bridge worktrees:
+
+- A live WI 157502 test confirmed that VS Code Remote can accept `vscode.openFolder(..., forceNewWindow)` for the same `/app` folder without opening a visibly separate window. The old fallback therefore continued the bridge in the dashboard workspace and changed its active Git branch.
+- The `vscode_bridge` new-window mode now creates or reuses a dedicated worktree at `/workspaces/.content-ai-worktrees/<repository>/<branch>` before preparing the agent context. The dashboard workspace remains a dispatcher and is never switched to the work-item branch.
+- The dispatcher bridge job opens the separate worktree with the existing remote authority. The bridge extension activated in that window processes the actual job stored in the isolated worktree. This makes new windows and Git isolation a single reliable mechanism.
+- Improved the bridge JSON parser to accept the first complete JSON object when a Copilot model appends extra JSON or prose. WI 157502 previously failed because the old parser combined multiple objects into invalid JSON.
+- Validation completed with Python compilation, Node syntax checking, and a live isolated worktree creation for the WI 157502 rerun branch. The active devcontainer bridge files were refreshed; VS Code must reload its window once to activate the new extension code.
