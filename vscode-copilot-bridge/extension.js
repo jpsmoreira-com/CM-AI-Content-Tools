@@ -331,7 +331,7 @@ function instructionEntriesFromIndex(indexText) {
     }
     const originalPath = match[1].trim();
     const packagedPath = match[2].trim();
-    if (originalPath && packagedPath) {
+    if (originalPath && packagedPath && !/^[-:]+$/.test(originalPath) && !/^[-:]+$/.test(packagedPath)) {
       entries.push({ originalPath, packagedPath });
     }
   }
@@ -520,33 +520,49 @@ async function runJob(jobUri) {
       const decision = extractJson(raw);
       const action = String(decision.action || "").toLowerCase();
       if (action === "read") {
-        const paths = Array.isArray(decision.paths) ? decision.paths.slice(0, 10) : [];
-        const files = [];
-        for (const path of paths) {
-          const cleanPath = relativeWorkspacePath(path);
-          files.push({ path: cleanPath, content: await readText(workspaceUri(cleanPath)) });
+        try {
+          const paths = Array.isArray(decision.paths) ? decision.paths.slice(0, 10) : [];
+          const files = [];
+          for (const path of paths) {
+            const cleanPath = relativeWorkspacePath(path);
+            files.push({ path: cleanPath, content: await readText(workspaceUri(cleanPath)) });
+          }
+          history.push(`Tool result for read:\n${JSON.stringify(files)}`);
+        } catch (toolError) {
+          history.push(`Tool error for read: ${toolError instanceof Error ? toolError.message : String(toolError)}`);
         }
-        history.push(`Tool result for read:\n${JSON.stringify(files)}`);
         continue;
       }
       if (action === "list") {
-        const files = await listFiles(String(decision.path || ""));
-        history.push(`Tool result for list:\n${JSON.stringify(files)}`);
+        try {
+          const files = await listFiles(String(decision.path || ""));
+          history.push(`Tool result for list:\n${JSON.stringify(files)}`);
+        } catch (toolError) {
+          history.push(`Tool error for list: ${toolError instanceof Error ? toolError.message : String(toolError)}`);
+        }
         continue;
       }
       if (action === "search") {
-        const hits = await searchFiles(String(decision.query || ""), String(decision.path || ""));
-        history.push(`Tool result for search:\n${JSON.stringify(hits)}`);
+        try {
+          const hits = await searchFiles(String(decision.query || ""), String(decision.path || ""));
+          history.push(`Tool result for search:\n${JSON.stringify(hits)}`);
+        } catch (toolError) {
+          history.push(`Tool error for search: ${toolError instanceof Error ? toolError.message : String(toolError)}`);
+        }
         continue;
       }
       if (action === "apply") {
-        const applied = await applyChanges(decision.changes);
-        applied.forEach((path) => {
-          if (!changedFiles.includes(path)) {
-            changedFiles.push(path);
-          }
-        });
-        history.push(`Tool result for apply: ${JSON.stringify({ applied })}`);
+        try {
+          const applied = await applyChanges(decision.changes);
+          applied.forEach((path) => {
+            if (!changedFiles.includes(path)) {
+              changedFiles.push(path);
+            }
+          });
+          history.push(`Tool result for apply: ${JSON.stringify({ applied })}`);
+        } catch (toolError) {
+          history.push(`Tool error for apply: ${toolError instanceof Error ? toolError.message : String(toolError)}`);
+        }
         continue;
       }
       if (action === "finish") {
