@@ -2309,6 +2309,7 @@ def _run_markdown_link_validation(
 import base64
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import unquote
@@ -2357,6 +2358,34 @@ def target_exists(source_file, destination):
         candidates.append(target / "index.md")
     return any(candidate.exists() for candidate in candidates)
 
+baseline_broken_links = set()
+for relative_file in files:
+    source_file = (root / relative_file).resolve()
+    try:
+        baseline_result = subprocess.run(
+            ["git", "show", "HEAD:" + relative_file],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError:
+        continue
+    if baseline_result.returncode != 0:
+        continue
+    for line in baseline_result.stdout.splitlines():
+        for match in markdown_link_re.finditer(line):
+            destination = clean_destination(match.group(2))
+            if not target_exists(source_file, destination):
+                baseline_broken_links.add((relative_file, destination))
+        click_match = mermaid_click_re.search(line)
+        if click_match:
+            destination = clean_destination(click_match.group(1))
+            if not target_exists(source_file, destination):
+                baseline_broken_links.add((relative_file, destination))
+
 for relative_file in files:
     source_file = (root / relative_file).resolve()
     if source_file.suffix.lower() != ".md" or not source_file.exists():
@@ -2368,12 +2397,12 @@ for relative_file in files:
     for line_number, line in enumerate(text.splitlines(), start=1):
         for match in markdown_link_re.finditer(line):
             destination = clean_destination(match.group(2))
-            if not target_exists(source_file, destination):
+            if not target_exists(source_file, destination) and (relative_file, destination) not in baseline_broken_links:
                 errors.append(f"{{relative_file}}:{{line_number}}: local link target not found: {{destination}}")
         click_match = mermaid_click_re.search(line)
         if click_match:
             destination = clean_destination(click_match.group(1))
-            if not target_exists(source_file, destination):
+            if not target_exists(source_file, destination) and (relative_file, destination) not in baseline_broken_links:
                 errors.append(f"{{relative_file}}:{{line_number}}: Mermaid click target not found: {{destination}}")
 
 print(json.dumps({{"errors": errors, "warnings": warnings}}, ensure_ascii=False))

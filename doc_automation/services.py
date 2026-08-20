@@ -3508,12 +3508,21 @@ class AutomationService:
             if not portal_name or not work_item_id:
                 continue
             try:
-                result = self.run_bulk_auto_flow(
+                self._schedule_auto_completion(
                     portal_name=portal_name,
-                    work_item_ids=[work_item_id],
                     iteration_path=str(state.get("iteration_path") or ""),
+                    triage_status=str(state.get("triage_status") or "pending"),
+                    selected_base_branch=str(state.get("selected_base_branch") or ""),
+                    work_type=str(state.get("work_type") or "task"),
+                    planned_branch_name=str(state.get("branch_name") or ""),
                 )
-                results.extend(list(result.get("results") or []))
+                results.append(
+                    {
+                        "work_item_id": work_item_id,
+                        "status": "resumed",
+                        "detail": "Resumed the persisted automatic flow without recreating its branch plan or agent run.",
+                    }
+                )
             except Exception as exc:
                 results.append(
                     {
@@ -4952,7 +4961,7 @@ class AutomationService:
                         has_result_to_continue = (
                             bool(result_path)
                             and agent_result_status
-                            and agent_result_status not in {"", "waiting", "error"}
+                            and agent_result_status not in {"", "waiting"}
                         )
                         needs_agent_launch = (
                             push_status != "pushed"
