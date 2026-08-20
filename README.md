@@ -123,7 +123,15 @@ For VS Code Copilot:
 - the prompt names the configured Settings `Agent Name` and `Model Name` as the functional agent/model contract; the generated VS Code transport mode is only used to deliver the handoff and must not be treated as a reason to stop the run by itself;
 - strict model-safety mode is blocked for the automatic pipeline because it prepares context only and does not execute repository edits.
 
-For CLI providers such as Codex, Claude, or a custom command:
+For GitHub Copilot CLI, the recommended autonomous Copilot provider:
+
+- select `GitHub Copilot CLI (autonomous)` in `Settings`;
+- select an entitled Copilot CLI model in `Model Name` (for example, the configured GPT 5.6 model);
+- complete the one-time GitHub Copilot CLI device authorization when Settings reports that authentication is missing, or provide a supported fine-grained token through `COPILOT_GITHUB_TOKEN` for unattended environments;
+- the provider runs non-interactively inside the configured runtime, receives the complete generated context package, and is allowed to read, edit, and run validation commands only;
+- the provider is explicitly denied Git commit, push, reset, clean, and removal commands. The dashboard owns the post-green-light commit, push, and Draft PR stages.
+
+For other CLI providers such as Codex, Claude, or a custom command:
 
 - select the provider in `Settings`;
 - configure the `CLI Command Template`;
@@ -233,7 +241,7 @@ The bootstrap:
 - clones or updates the centralized `CM-AI-Content-Skills` checkout;
 - restores `CONTENT_AI_SETTINGS_PATH/git-credentials` into the devcontainer user's `~/.git-credentials` when available, then validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
 - writes TFS SSL runtime defaults for the devcontainer. Internal devcontainers default to `DOC_AUTOMATION_TFS_VERIFY_SSL=false` unless `CONTENT_AI_TFS_VERIFY_SSL` is provided;
-- installs Codex CLI into the devcontainer user's npm prefix when `TFS_AUTONOMOUS_INSTALL_CODEX_CLI=true` and the executable is missing;
+- installs Codex CLI and GitHub Copilot CLI into the devcontainer user's npm prefix when `TFS_AUTONOMOUS_INSTALL_CODEX_CLI=true` and `TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI=true` respectively, and the executables are missing;
 - installs the pipeline requirements into `~/.venvs/tfs-doc-automation-mvp`;
 - creates a `tfs-autonomous-pipeline` wrapper in `~/.local/bin`;
 - makes the wrapper sync the central Content AI runtime copy before starting the dashboard or worker;

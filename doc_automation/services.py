@@ -37,6 +37,7 @@ from .copilot import (
     read_agent_provider_status,
     read_wsl_text_file,
     start_codex_device_login,
+    start_github_copilot_device_login,
     validate_agent_changes_for_push,
     wsl_path_to_unc_path,
 )
@@ -3127,7 +3128,7 @@ class AutomationService:
         workspace_path: str = "",
     ) -> Dict[str, Any]:
         provider = str(runtime_settings.get("copilot_provider") or "").strip()
-        if provider not in {"vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
+        if provider not in {"copilot_cli", "vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
             return {
                 "status": "skipped",
                 "ok": True,
@@ -3150,6 +3151,14 @@ class AutomationService:
                     and ("credential" in message or "auth" in message or "login" in message)
                 ):
                     preflight["login"] = start_codex_device_login(
+                        distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
+                    )
+                if (
+                    provider == "copilot_cli"
+                    and not bool(preflight.get("ok"))
+                    and any(token in message for token in {"auth", "login", "credential", "sign in", "token"})
+                ):
+                    preflight["login"] = start_github_copilot_device_login(
                         distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
                     )
                 return preflight
@@ -3322,7 +3331,7 @@ class AutomationService:
         runtime_settings = load_runtime_settings()
         runtime_provider = str(runtime_settings.get("copilot_provider") or "").strip()
         execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
-        provider_requires_process = runtime_provider in {"codex_cli", "claude_cli", "custom_cli"}
+        provider_requires_process = runtime_provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}
         results: List[Dict[str, Any]] = []
 
         for work_item_id in ordered_ids:
@@ -4400,7 +4409,7 @@ class AutomationService:
 
         provider = str(runtime_settings.get("copilot_provider") or "").strip()
         if (
-            provider in {"codex_cli", "claude_cli", "custom_cli"}
+            provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}
             and str(current_item.get("copilot_status") or "").strip().lower() in {"launched", "prepared"}
             and not str(current_item.get("copilot_process_id") or "").strip()
         ):

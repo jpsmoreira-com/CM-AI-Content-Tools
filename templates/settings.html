@@ -379,7 +379,7 @@
                             <select name="copilot_provider">
                                 {% for option in copilot_provider_options %}
                                 <option value="{{ option }}" {% if option == runtime_settings.copilot_provider %}selected{% endif %}>
-                                    {% if option == "m365_desktop" %}Microsoft 365 Copilot Desktop (not automation-capable){% elif option == "vscode_bridge" %}VS Code Copilot Bridge (autonomous){% elif option == "vscode" %}VS Code Copilot Chat CLI (legacy){% elif option == "codex_cli" %}Codex CLI{% elif option == "claude_cli" %}Claude CLI{% elif option == "custom_cli" %}Custom CLI{% endif %}
+                                    {% if option == "m365_desktop" %}Microsoft 365 Copilot Desktop (not automation-capable){% elif option == "copilot_cli" %}GitHub Copilot CLI (autonomous){% elif option == "vscode_bridge" %}VS Code Copilot Bridge (autonomous){% elif option == "vscode" %}VS Code Copilot Chat CLI (legacy){% elif option == "codex_cli" %}Codex CLI{% elif option == "claude_cli" %}Claude CLI{% elif option == "custom_cli" %}Custom CLI{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
@@ -400,6 +400,8 @@
                                 <option value="GPT-4.1"></option>
                                 <option value="GPT-4o"></option>
                                 <option value="GPT-5 mini"></option>
+                                <option value="GPT 5.6 Terra"></option>
+                                <option value="GPT 5.6 Luna"></option>
                                 <option value="Raptor mini (Preview)"></option>
                             </datalist>
                         </label>
@@ -452,11 +454,11 @@
                             <textarea
                                 name="copilot_cli_command_template"
                                 rows="4"
-                                placeholder="Required for Codex, Claude, or Custom CLI providers. Example: your-command --prompt {{ '{{prompt_path}}' }}. Use {{ '{{workspace_unc_path}}' }} for Windows executors."
+                                placeholder="Optional override for Codex, Claude, or Custom CLI providers. GitHub Copilot CLI has a built-in autonomous command. Use {{ '{{workspace_unc_path}}' }} for Windows executors."
                             >{{ runtime_settings.copilot_cli_command_template }}</textarea>
                         </label>
                     </div>
-                    <p class="hint">VS Code Copilot is the current automatic executor. Codex, Claude, and Custom CLI providers run the configured command template in WSL and must write the expected <code>agent-result.json</code>. Microsoft 365 Copilot Desktop is listed for visibility, but the pipeline blocks it until an approved automation connector is available.</p>
+                    <p class="hint">GitHub Copilot CLI is the recommended autonomous Copilot executor. It runs inside the configured runtime with the selected model and writes the expected <code>agent-result.json</code>; the pipeline performs commit, push, and Draft PR creation only after a green light. Codex, Claude, and Custom CLI providers use the configured command template. Microsoft 365 Copilot Desktop is listed for visibility, but the pipeline blocks it until an approved automation connector is available.</p>
                 </section>
 
                 <section class="settings-group" id="context-capture-settings">

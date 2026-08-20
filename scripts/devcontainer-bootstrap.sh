@@ -187,6 +187,24 @@ ensure_codex_cli() {
   npm install -g @openai/codex
 }
 
+ensure_github_copilot_cli() {
+  if [ "${TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI:-true}" != "true" ]; then
+    return 0
+  fi
+  mkdir -p "$NPM_CONFIG_PREFIX/bin"
+  ensure_node_runtime
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm was not found; skipping GitHub Copilot CLI install. The dashboard will report a provider preflight warning if GitHub Copilot CLI is selected." >&2
+    return 0
+  fi
+  if command -v copilot >/dev/null 2>&1 || [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then
+    echo "GitHub Copilot CLI is already available."
+    return 0
+  fi
+  echo "Installing GitHub Copilot CLI into $NPM_CONFIG_PREFIX..."
+  npm install -g @github/copilot
+}
+
 content_ai_worktree_dirty() {
   [ -n "$(git -C "$CONTENT_AI_REPO_PATH" status --porcelain --untracked-files=all)" ]
 }
@@ -247,6 +265,7 @@ ensure_settings_path
 restore_persisted_git_credentials
 configure_tfs_git_credentials
 ensure_codex_cli
+ensure_github_copilot_cli
 
 sync_content_ai_project
 

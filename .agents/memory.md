@@ -949,3 +949,12 @@ Next recommended tasks:
 - The pipeline runs Git credential preflight again immediately before commit/push. This restores the persistent `store` helper if VS Code Remote has replaced it with its interactive helper after container startup.
 - WI 157502 rerun history: the first isolated-window run edited the documentation successfully but did not publish because the Git credential helper was still interactive. The following rerun failed before edits because the bridge treated one missing model-requested file as a terminal error. No WI 157502 rerun has completed through commit, push, and Draft PR yet.
 - The bridge now treats read/list/search/apply tool errors as feedback for the model's next iteration. A missing guessed path can no longer terminate an otherwise recoverable job.
+
+2026-08-20 GitHub Copilot CLI autonomous provider:
+
+- Added `copilot_cli` as a separate autonomous provider without changing the established `codex_cli` path.
+- The provider executes GitHub Copilot CLI non-interactively inside the configured DevContainer/Linux runtime, passes the dashboard `Model Name` to `--model`, and gives the agent the full prepared handoff through `-p`.
+- The agent can read, write, and run validation shell commands but is denied Git commit, push, reset, clean, and removal commands. The dashboard remains responsible for validating `agent-result.json`, committing, pushing, writing the final report, and creating the Draft PR after `green_light`.
+- Added bootstrap and post-create installation for `@github/copilot`, controlled by `TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI=true`.
+- Provider preflight now confirms that the executable exists, authentication works, and the configured model can answer a small non-interactive request. Missing authentication starts a one-time GitHub OAuth device flow and stores its CLI state under the persisted Content AI settings directory when available.
+- WI 157946 is the next real end-to-end validation once the GitHub device authorization is completed for the active devcontainer.

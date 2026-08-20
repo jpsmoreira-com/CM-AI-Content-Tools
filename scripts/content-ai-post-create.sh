@@ -372,6 +372,22 @@ check_codex_cli() {
   fi
 }
 
+ensure_github_copilot_cli() {
+  if [ "${TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI:-true}" != "true" ]; then
+    return 0
+  fi
+  if command -v copilot >/dev/null 2>&1; then
+    log "GitHub Copilot CLI is available."
+    return 0
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    warn "GitHub Copilot CLI was not found and npm is unavailable. The dashboard provider preflight will report this if GitHub Copilot CLI is selected."
+    return 0
+  fi
+  log "Installing GitHub Copilot CLI into $NPM_CONFIG_PREFIX"
+  npm install -g @github/copilot
+}
+
 install_vscode_copilot_bridge() {
   local bridge_directory="$PIPELINE_PROJECT_PATH/vscode-copilot-bridge"
   local bridge_vsix="$bridge_directory/content-ai-pipeline-bridge-0.1.0.vsix"
@@ -506,6 +522,7 @@ write_runtime_files "$target_repository"
 sync_content_ai_assets
 prepare_docker_config
 check_codex_cli
+ensure_github_copilot_cli
 install_vscode_copilot_bridge
 write_wrappers
 run_health_check
