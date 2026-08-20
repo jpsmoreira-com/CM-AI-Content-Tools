@@ -3041,6 +3041,7 @@ class AutomationService:
         copilot_provider: str,
         copilot_model_name: str,
         copilot_agent_name: str,
+        copilot_cli_host: str,
         copilot_auto_launch: bool,
         copilot_prompt_template: str,
         copilot_cli_command_template: str,
@@ -3085,6 +3086,7 @@ class AutomationService:
                 copilot_provider=copilot_provider,
                 copilot_model_name=copilot_model_name,
                 copilot_agent_name=copilot_agent_name,
+                copilot_cli_host=copilot_cli_host,
                 copilot_auto_launch=copilot_auto_launch,
                 copilot_prompt_template=copilot_prompt_template,
                 copilot_cli_command_template=copilot_cli_command_template,
@@ -3160,6 +3162,7 @@ class AutomationService:
                 ):
                     preflight["login"] = start_github_copilot_device_login(
                         distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
+                        host=str(runtime_settings.get("copilot_cli_host") or "").strip(),
                     )
                 return preflight
         except CopilotIntegrationError as exc:

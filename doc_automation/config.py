@@ -91,6 +91,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "copilot_provider": "copilot_cli",
     "copilot_model_name": "GPT 5.6 Terra",
     "copilot_agent_name": "",
+    "copilot_cli_host": "https://github.com",
     "copilot_auto_launch": True,
     "copilot_prompt_template": DEFAULT_AGENT_PROMPT_TEMPLATE,
     "copilot_cli_command_template": "",
@@ -576,6 +577,9 @@ def load_runtime_settings() -> Dict[str, Any]:
         "copilot_agent_name": str(
             raw.get("DOC_AUTOMATION_COPILOT_AGENT_NAME") or DEFAULT_RUNTIME_SETTINGS["copilot_agent_name"]
         ).strip(),
+        "copilot_cli_host": str(
+            raw.get("DOC_AUTOMATION_COPILOT_CLI_HOST") or DEFAULT_RUNTIME_SETTINGS["copilot_cli_host"]
+        ).strip(),
         "copilot_auto_launch": parse_bool(
             raw.get("DOC_AUTOMATION_COPILOT_AUTO_LAUNCH"),
             DEFAULT_RUNTIME_SETTINGS["copilot_auto_launch"],
@@ -683,6 +687,7 @@ def save_runtime_settings(
     copilot_provider: str,
     copilot_model_name: str,
     copilot_agent_name: str,
+    copilot_cli_host: str,
     copilot_auto_launch: bool,
     copilot_prompt_template: str,
     copilot_cli_command_template: str,
@@ -762,6 +767,7 @@ def save_runtime_settings(
         "DOC_AUTOMATION_COPILOT_PROVIDER": copilot_provider.strip(),
         "DOC_AUTOMATION_COPILOT_MODEL_NAME": copilot_model_name.strip(),
         "DOC_AUTOMATION_COPILOT_AGENT_NAME": copilot_agent_name.strip(),
+        "DOC_AUTOMATION_COPILOT_CLI_HOST": copilot_cli_host.strip(),
         "DOC_AUTOMATION_COPILOT_AUTO_LAUNCH": "true" if copilot_auto_launch else "false",
         "DOC_AUTOMATION_COPILOT_PROMPT_TEMPLATE": copilot_prompt_template.strip(),
         "DOC_AUTOMATION_COPILOT_CLI_COMMAND_TEMPLATE": copilot_cli_command_template.strip(),

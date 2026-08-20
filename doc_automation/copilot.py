@@ -1028,8 +1028,9 @@ fi
     }
 
 
-def start_github_copilot_device_login(*, distro: str) -> Dict[str, Any]:
+def start_github_copilot_device_login(*, distro: str, host: str = "") -> Dict[str, Any]:
     """Start the one-time GitHub Copilot CLI OAuth device flow in the runtime."""
+    clean_host = str(host or "").strip() or "https://github.com"
     script = r'''
 set -eu
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
@@ -1045,7 +1046,7 @@ if [ -z "$copilot_bin" ]; then
 fi
 mkdir -p "$COPILOT_HOME/login"
 log_path="$COPILOT_HOME/login/device-login-$(date +%Y%m%d-%H%M%S).log"
-nohup "$copilot_bin" login --device-code > "$log_path" 2>&1 &
+nohup "$copilot_bin" login --device-code --host ''' + _shell_quote(clean_host) + r''' > "$log_path" 2>&1 &
 pid="$!"
 i=0
 while [ "$i" -lt 30 ]; do
@@ -1083,7 +1084,7 @@ fi
         return {"status": "error", "ok": False, "message": error, "pid": process_id, "log_path": log_path}
 
     login_output = "\n".join(line for line in output.splitlines() if not line.startswith("__DOC_AUTOMATION_"))
-    url_match = re.search(r"https://github\.com/login/device", login_output)
+    url_match = re.search(r"https://[^\s]+/login/device", login_output)
     code_match = re.search(r"\b[A-Z0-9]{4}-[A-Z0-9]{4}\b", login_output)
     if "signed in successfully" in login_output.lower():
         message = "GitHub Copilot CLI is already authenticated in the configured runtime."

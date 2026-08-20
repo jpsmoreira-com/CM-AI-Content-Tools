@@ -409,6 +409,10 @@
                             <span>Agent Name</span>
                             <input type="text" name="copilot_agent_name" value="{{ runtime_settings.copilot_agent_name }}" placeholder="CM GPT">
                         </label>
+                        <label>
+                            <span>GitHub Copilot Host</span>
+                            <input type="url" name="copilot_cli_host" value="{{ runtime_settings.copilot_cli_host }}" placeholder="https://github.com">
+                        </label>
                         <label class="checkbox-field">
                             <span>Run Executor Automatically</span>
                             <input type="checkbox" name="copilot_auto_launch" value="true" {% if runtime_settings.copilot_auto_launch %}checked{% endif %}>

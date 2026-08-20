@@ -958,3 +958,4 @@ Next recommended tasks:
 - Added bootstrap and post-create installation for `@github/copilot`, controlled by `TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI=true`.
 - Provider preflight now confirms that the executable exists, authentication works, and the configured model can answer a small non-interactive request. Missing authentication starts a one-time GitHub OAuth device flow and stores its CLI state under the persisted Content AI settings directory when available.
 - WI 157946 is the next real end-to-end validation once the GitHub device authorization is completed for the active devcontainer.
+- Added the persisted `GitHub Copilot Host` runtime setting for Enterprise Cloud data-residency tenants. The active test environment uses `https://criticalmanufacturing.ghe.com`; device authorization is launched with `copilot login --host <configured-host> --device-code`.
