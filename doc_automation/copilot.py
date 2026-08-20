@@ -500,26 +500,108 @@ def _render_template(template: str, values: Dict[str, str]) -> str:
     return rendered
 
 
+def _github_copilot_cli_model_id(model_name: str) -> str:
+    """Translate dashboard display names into the model IDs accepted by Copilot CLI."""
+    clean_name = str(model_name or "").strip()
+    normalized_name = re.sub(r"[^a-z0-9]+", " ", clean_name.lower()).strip()
+    aliases = {
+        "gpt 5 6 terra": "gpt-5.6-terra",
+        "gpt 5 6 luna": "gpt-5.6-luna",
+        "gpt 5 6 sol": "gpt-5.6-sol",
+        "gpt 5 mini": "gpt-5-mini",
+    }
+    return aliases.get(normalized_name, clean_name)
+
+
 def _github_copilot_cli_command(*, prompt_path: str, model_name: str, agent_name: str) -> str:
     """Build the bounded non-interactive command for the GitHub Copilot CLI provider."""
     command = " ; ".join(
         [
             'export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"',
-            'export COPILOT_HOME="${COPILOT_HOME:-${CONTENT_AI_SETTINGS_PATH:-$HOME/.copilot}/copilot-cli}"',
             'export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"',
             'copilot_bin="$(command -v copilot || true)"',
             'if [ -z "$copilot_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then copilot_bin="$NPM_CONFIG_PREFIX/bin/copilot"; fi',
             'if [ -z "$copilot_bin" ]; then echo "GitHub Copilot CLI executable was not found on PATH." >&2; exit 20; fi',
-            '"$copilot_bin" -p "$(cat ' + _shell_quote(prompt_path) + ')" -s --no-ask-user '
+            '"$copilot_bin" -p "$(cat ' + _shell_quote(prompt_path) + ')" -s --stream=off --mode=autopilot --max-autopilot-continues=10 --no-ask-user '
             '--allow-tool="read,write,shell" '
             '--deny-tool="shell(git commit),shell(git push),shell(git reset),shell(git clean),shell(rm:*)"',
         ]
     )
-    if str(model_name or "").strip():
-        command += " --model=" + _shell_quote(str(model_name).strip())
+    cli_model_name = _github_copilot_cli_model_id(model_name)
+    if cli_model_name:
+        command += " --model=" + _shell_quote(cli_model_name)
     if str(agent_name or "").strip():
         command += " --agent=" + _shell_quote(str(agent_name).strip())
     return command
+
+
+def _agent_result_recovery_parser_command(*, response_path: str, result_path: str) -> str:
+    """Turn a CLI-only JSON response into the result contract consumed by the pipeline."""
+    parser = """
+import json
+import re
+import sys
+from pathlib import Path
+
+response_path = Path(sys.argv[1])
+result_path = Path(sys.argv[2])
+text = response_path.read_text(encoding="utf-8", errors="replace") if response_path.exists() else ""
+
+candidates = []
+for match in re.finditer(r"```(?:json)?\\s*(\\{.*?\\})\\s*```", text, re.DOTALL | re.IGNORECASE):
+    candidates.append(match.group(1))
+start = text.find("{")
+end = text.rfind("}")
+if start >= 0 and end > start:
+    candidates.append(text[start:end + 1])
+
+payload = None
+for candidate in candidates:
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        continue
+    if isinstance(parsed, dict):
+        payload = parsed
+        break
+
+if payload is None:
+    payload = {
+        "status": "needs_manual_review",
+        "green_light": False,
+        "summary": "GitHub Copilot CLI completed the implementation phase but did not return the required machine-readable report.",
+        "error": "Automatic result recovery could not parse a JSON response from GitHub Copilot CLI.",
+        "changed_files": [],
+        "final_report": {},
+        "spec_references": [],
+        "validation": "",
+        "instruction_files_read": [],
+        "capture_files_read": [],
+        "prs_reviewed": [],
+        "diffs_reviewed": [],
+        "work_items_reviewed": [],
+        "reviewer_notes": "Review the provider log and rerun the reporting step before pushing changes.",
+    }
+
+result_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
+""".strip()
+    return "python3 -c " + _shell_quote(parser) + " " + _shell_quote(response_path) + " " + _shell_quote(result_path)
+
+
+def _github_copilot_cli_result_recovery_prompt(*, result_path: str) -> str:
+    """Request the result contract separately when Copilot completed but skipped the file write."""
+    return "\n".join(
+        [
+            "# TFS Documentation Automation Result Recovery",
+            "The implementation phase has completed. Do not edit, format, validate, commit, push, or create pull requests.",
+            "Inspect the current repository diff and the prepared work item context already available in `.automation-context/copilot/`.",
+            "Return only one valid JSON object, without Markdown fences or explanatory text.",
+            "The object must contain: `status`, `green_light`, `summary`, `changed_files`, `final_report`, `spec_references`, `validation`, `instruction_files_read`, `capture_files_read`, `prs_reviewed`, `diffs_reviewed`, `work_items_reviewed`, `reviewer_notes`, and optional `error`.",
+            "Use repository-relative paths in `changed_files`. Set `green_light` to true only when the current diff is ready for the dashboard validation and push stages.",
+            "`instruction_files_read` must list every original repository instruction path you read. `final_report` must explain what changed and why.",
+            f"The dashboard will save your JSON response as `{result_path}`.",
+        ]
+    )
 
 
 def _launch_cli_agent_in_wsl(
@@ -561,6 +643,21 @@ def _launch_cli_agent_in_wsl(
     )
     package_directory = str(log_path).rsplit("/", 1)[0]
     wrapper_path = f"{package_directory}/agent-provider.sh"
+    recovery_prompt_path = f"{package_directory}/agent-result-recovery-prompt.md"
+    recovery_response_path = f"{package_directory}/agent-result-recovery-response.txt"
+    recovery_command = ""
+    if provider == "copilot_cli":
+        recovery_prompt = _github_copilot_cli_result_recovery_prompt(result_path=agent_result_path)
+        _write_file_via_wsl(distro, recovery_prompt_path, recovery_prompt)
+        recovery_command = _github_copilot_cli_command(
+            prompt_path=recovery_prompt_path,
+            model_name=model_name,
+            agent_name=agent_name,
+        )
+    recovery_parser_command = _agent_result_recovery_parser_command(
+        response_path=recovery_response_path,
+        result_path=agent_result_path,
+    )
     wrapper = "\n".join(
         [
             "#!/bin/sh",
@@ -571,7 +668,17 @@ def _launch_cli_agent_in_wsl(
             f"echo \"[doc-automation] branch={branch_name}\"",
             f"echo \"[doc-automation] result={agent_result_path}\"",
             f"cd {_shell_quote(workspace_path)}",
-            f"exec sh -lc {_shell_quote(command)}",
+            "provider_status=0",
+            # The wrapper has already selected the work-item worktree. Do not start a
+            # login shell here because it can reset the working directory to $HOME.
+            f"sh -c {_shell_quote(command)} || provider_status=$?",
+            "if [ \"$provider_status\" -eq 0 ] && [ ! -s " + _shell_quote(agent_result_path) + " ] && [ -n " + _shell_quote(recovery_command) + " ]; then",
+            "  echo \"[doc-automation] provider completed without agent-result.json; requesting result recovery\"",
+            "  rm -f " + _shell_quote(recovery_response_path),
+            "  sh -c " + _shell_quote(recovery_command) + " > " + _shell_quote(recovery_response_path) + " 2>&1 || true",
+            "  " + recovery_parser_command,
+            "fi",
+            "exit \"$provider_status\"",
             "",
         ]
     )
@@ -819,11 +926,11 @@ printf '%s\n' "$bridge_manifest"
             "message": f"Configure a CLI command template before launching provider '{clean_provider}'.",
         }
     if clean_provider == "copilot_cli":
-        model_option = f" --model={_shell_quote(str(model_name).strip())}" if str(model_name or "").strip() else ""
+        cli_model_name = _github_copilot_cli_model_id(model_name)
+        model_option = f" --model={_shell_quote(cli_model_name)}" if cli_model_name else ""
         script = r'''
 set -eu
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
-export COPILOT_HOME="${COPILOT_HOME:-${CONTENT_AI_SETTINGS_PATH:-$HOME/.copilot}/copilot-cli}"
 export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"
 copilot_bin="$(command -v copilot || true)"
 if [ -z "$copilot_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then
@@ -834,14 +941,20 @@ if [ -z "$copilot_bin" ]; then
   exit 20
 fi
 "$copilot_bin" --version
-mkdir -p "$COPILOT_HOME"
 "$copilot_bin" -p 'Reply with READY only.' -s --no-ask-user''' + model_option + "\n"
         result = _run_wsl_script(distro, script, timeout_seconds=90)
-        if result.returncode != 0:
+        output = "\n".join([result.stdout or "", result.stderr or ""]).strip()
+        authentication_missing = "no authentication information found" in output.lower()
+        if result.returncode != 0 or authentication_missing:
             return {
                 "status": "error",
                 "ok": False,
-                "message": (result.stderr or result.stdout or "GitHub Copilot CLI preflight failed.").strip(),
+                "message": (
+                    "GitHub Copilot CLI authentication is not available in this runtime. "
+                    "Start the device login from Settings and complete the displayed authorization."
+                    if authentication_missing
+                    else (result.stderr or result.stdout or "GitHub Copilot CLI preflight failed.").strip()
+                ),
                 "stdout": result.stdout.strip(),
                 "stderr": result.stderr.strip(),
             }
@@ -1034,7 +1147,6 @@ def start_github_copilot_device_login(*, distro: str, host: str = "") -> Dict[st
     script = r'''
 set -eu
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
-export COPILOT_HOME="${COPILOT_HOME:-${CONTENT_AI_SETTINGS_PATH:-$HOME/.copilot}/copilot-cli}"
 export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"
 copilot_bin="$(command -v copilot || true)"
 if [ -z "$copilot_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then
@@ -1044,9 +1156,12 @@ if [ -z "$copilot_bin" ]; then
   echo "__DOC_AUTOMATION_ERROR__=GitHub Copilot CLI executable was not found on PATH or at $NPM_CONFIG_PREFIX/bin/copilot."
   exit 20
 fi
-mkdir -p "$COPILOT_HOME/login"
-log_path="$COPILOT_HOME/login/device-login-$(date +%Y%m%d-%H%M%S).log"
-nohup "$copilot_bin" login --device-code --host ''' + _shell_quote(clean_host) + r''' > "$log_path" 2>&1 &
+login_directory="${CONTENT_AI_SETTINGS_PATH:-$HOME/.copilot}/copilot-cli/login"
+mkdir -p "$login_directory"
+chmod 700 "$login_directory"
+log_path="$login_directory/device-login-$(date +%Y%m%d-%H%M%S).log"
+login_command="stty -echo; exec $copilot_bin login --device-code --host ''' + _shell_quote(clean_host) + r'''"
+nohup sh -c 'yes y | script -q -c "$1" /dev/null' copilot-login "$login_command" > "$log_path" 2>&1 &
 pid="$!"
 i=0
 while [ "$i" -lt 30 ]; do
@@ -1168,15 +1283,10 @@ def build_work_item_context(
     repository_instructions = [
         "- The workspace may contain `AGENTS.md`, `.github/copilot-instructions.md`, and `.agents` materials. These are attached when present and must be followed.",
     ]
-    if strict_model_safety:
-        repository_instructions.append(
-            "- The work must run with the approved `CM GPT` model. If the active model is not `CM GPT`, stop before reading or editing repository content."
-        )
-    else:
-        configured_model = str(model_name or "").strip() or "the configured VS Code Copilot model"
-        repository_instructions.append(
-            f"- Temporary test mode: the CM GPT-only guard is disabled for this run. Use `{configured_model}` only to validate the end-to-end automation flow."
-        )
+    configured_model = str(model_name or "").strip() or "the configured agent model"
+    repository_instructions.append(
+        f"- Use the dashboard-selected model `{configured_model}`. Do not substitute another model or provider."
+    )
 
     lines = [
         f"# Work item {item['id']}",
@@ -2586,11 +2696,11 @@ def prepare_cm_gpt_handoff(
     clean_branch_name = str(branch_name or "").strip()
     clean_agent_name = str(agent_name or "").strip()
     clean_model_name = str(model_name or "").strip()
+    clean_provider = str(provider or "").strip() or "m365_desktop"
     if not clean_branch_name:
         raise CopilotIntegrationError("The work branch is not available yet.")
-    if not clean_agent_name:
+    if clean_provider == "m365_desktop" and not clean_agent_name:
         raise CopilotIntegrationError("Configure the CM GPT agent name before launching the integration.")
-    clean_provider = str(provider or "").strip() or "m365_desktop"
     if clean_provider not in {"m365_desktop", "copilot_cli", "vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
         raise CopilotIntegrationError(f"Unsupported agent provider '{clean_provider}'.")
     if strict_model_safety and clean_provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}:
@@ -2775,17 +2885,11 @@ def prepare_cm_gpt_handoff(
             "- Review PR diffs when they are available before deciding what to change.\n"
             "- Record the capture files, work items, PRs, and diffs used in `agent-result.json`."
         )
-    if strict_model_safety:
-        model_policy = (
-            "Security gate: this documentation automation workflow may only run with the approved `CM GPT` model. "
-            "If the active model is not `CM GPT`, stop immediately before reading files or repository content."
-        )
-    else:
-        configured_model = clean_model_name or "the configured VS Code Copilot model"
-        model_policy = (
-            f"Temporary test mode: use `{configured_model}` to validate the end-to-end documentation automation flow. "
-            "The CM GPT-only guard is intentionally disabled for this run."
-        )
+    configured_model = clean_model_name or "the configured agent model"
+    model_policy = (
+        f"Use the dashboard-selected model `{configured_model}` for this automation run. "
+        "Do not substitute another model or provider."
+    )
     provider_configuration = (
         "Run this request through the configured VS Code Copilot Language Model bridge:\n"
         f"- Provider: `{clean_provider}`\n"

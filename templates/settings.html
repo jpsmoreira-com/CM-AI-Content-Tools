@@ -390,11 +390,10 @@
                                 type="text"
                                 name="copilot_model_name"
                                 value="{{ runtime_settings.copilot_model_name }}"
-                                placeholder="CM GPT"
+                                placeholder="Optional custom agent"
                                 list="copilot-model-options"
                             >
                             <datalist id="copilot-model-options">
-                                <option value="CM GPT"></option>
                                 <option value="Auto"></option>
                                 <option value="Claude Haiku 4.5"></option>
                                 <option value="GPT-4.1"></option>
@@ -407,7 +406,7 @@
                         </label>
                         <label>
                             <span>Agent Name</span>
-                            <input type="text" name="copilot_agent_name" value="{{ runtime_settings.copilot_agent_name }}" placeholder="CM GPT">
+                            <input type="text" name="copilot_agent_name" value="{{ runtime_settings.copilot_agent_name }}" placeholder="Optional custom agent">
                         </label>
                         <label>
                             <span>GitHub Copilot Host</span>

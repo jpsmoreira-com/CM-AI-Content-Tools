@@ -242,6 +242,7 @@ The bootstrap:
 - restores `CONTENT_AI_SETTINGS_PATH/git-credentials` into the devcontainer user's `~/.git-credentials` when available, then validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
 - writes TFS SSL runtime defaults for the devcontainer. Internal devcontainers default to `DOC_AUTOMATION_TFS_VERIFY_SSL=false` unless `CONTENT_AI_TFS_VERIFY_SSL` is provided;
 - installs Codex CLI and GitHub Copilot CLI into the devcontainer user's npm prefix when `TFS_AUTONOMOUS_INSTALL_CODEX_CLI=true` and `TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI=true` respectively, and the executables are missing;
+- migrates the native GitHub Copilot CLI state from `~/.copilot` into `CONTENT_AI_SETTINGS_PATH/copilot-home` and links it back, so an approved device login survives devcontainer recreation;
 - installs the pipeline requirements into `~/.venvs/tfs-doc-automation-mvp`;
 - creates a `tfs-autonomous-pipeline` wrapper in `~/.local/bin`;
 - makes the wrapper sync the central Content AI runtime copy before starting the dashboard or worker;

@@ -372,6 +372,26 @@ check_codex_cli() {
   fi
 }
 
+ensure_persisted_github_copilot_home() {
+  local persisted_home backup_path timestamp
+  persisted_home="$CONTENT_AI_SETTINGS_PATH/copilot-home"
+
+  if [ -L "$HOME/.copilot" ]; then
+    return 0
+  fi
+
+  mkdir -p "$persisted_home"
+  chmod 700 "$persisted_home" || true
+  if [ -d "$HOME/.copilot" ]; then
+    cp -a "$HOME/.copilot/." "$persisted_home/"
+    timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
+    backup_path="$HOME/.copilot.local-backup-$timestamp"
+    mv "$HOME/.copilot" "$backup_path"
+    log "Migrated the native GitHub Copilot CLI state to $persisted_home (backup: $backup_path)."
+  fi
+  ln -s "$persisted_home" "$HOME/.copilot"
+}
+
 ensure_github_copilot_cli() {
   if [ "${TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI:-true}" != "true" ]; then
     return 0
@@ -522,6 +542,7 @@ write_runtime_files "$target_repository"
 sync_content_ai_assets
 prepare_docker_config
 check_codex_cli
+ensure_persisted_github_copilot_home
 ensure_github_copilot_cli
 install_vscode_copilot_bridge
 write_wrappers

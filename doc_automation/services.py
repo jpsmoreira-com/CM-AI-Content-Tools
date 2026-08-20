@@ -326,6 +326,20 @@ def _get_workspace_lock(path_value: str) -> threading.RLock:
         return lock
 
 
+def _agent_process_is_running(process_id: str) -> bool:
+    try:
+        process_id_value = int(str(process_id or "").strip())
+    except (TypeError, ValueError):
+        return False
+    if process_id_value <= 0:
+        return False
+    try:
+        os.kill(process_id_value, 0)
+    except OSError:
+        return False
+    return True
+
+
 def _credential_line_matches_host(line: str, host: str) -> bool:
     parsed = urlparse(line.strip())
     if not parsed.netloc:
@@ -1095,7 +1109,7 @@ def build_progress_steps(item: Dict[str, Any]) -> List[Dict[str, str]]:
             "state": "error" if branch_error else ("done" if has_branch else ("current" if plan_ready else "todo")),
         },
         {
-            "label": "CM GPT",
+            "label": "Agent",
             "state": "error" if copilot_error else ("done" if copilot_ready or agent_green or pushed or has_pr else ("current" if has_branch else "todo")),
         },
         {
@@ -1133,9 +1147,9 @@ def summarize_automation_stage(item: Dict[str, Any]) -> str:
         return "Repairing agent result"
     copilot_status = str(item.get("copilot_status") or "").strip().lower()
     if copilot_status in {"blocked", "desktop_prepared"}:
-        return "CM GPT automation blocked"
+        return "Agent automation blocked"
     if item.get("copilot_error"):
-        return "CM GPT launch failed"
+        return "Agent launch failed"
     if item.get("branch_error"):
         return "Branch creation failed"
     if agent_result_status in {"green_light", "ready_for_push", "success"}:
@@ -1143,9 +1157,9 @@ def summarize_automation_stage(item: Dict[str, Any]) -> str:
     if copilot_status == "launched":
         return "Waiting for agent result"
     if copilot_status == "prepared":
-        return "CM GPT handoff ready"
+        return "Agent handoff ready"
     if item.get("has_branch"):
-        return "Ready for CM GPT"
+        return "Ready for agent"
     if item.get("selected_base_branch"):
         return "Ready to create branch"
     return "Plan branch"
@@ -3977,6 +3991,31 @@ class AutomationService:
         work_type: str,
         planned_branch_name: str = "",
     ) -> Dict[str, Any]:
+        config = load_app_config()
+        portal = get_portal_config(config, portal_name)
+        workspace_lock = _get_workspace_lock(str(portal.get("copilot_workspace_path") or ""))
+        with workspace_lock:
+            return self._launch_copilot_session(
+                portal_name=portal_name,
+                work_item_id=work_item_id,
+                iteration_path=iteration_path,
+                triage_status=triage_status,
+                selected_base_branch=selected_base_branch,
+                work_type=work_type,
+                planned_branch_name=planned_branch_name,
+            )
+
+    def _launch_copilot_session(
+        self,
+        *,
+        portal_name: str,
+        work_item_id: int,
+        iteration_path: str,
+        triage_status: str,
+        selected_base_branch: str,
+        work_type: str,
+        planned_branch_name: str = "",
+    ) -> Dict[str, Any]:
         plan = self.save_plan(
             portal_name=portal_name,
             work_item_id=work_item_id,
@@ -4000,6 +4039,29 @@ class AutomationService:
         runtime_settings = load_runtime_settings()
         workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
         provider = str(runtime_settings.get("copilot_provider") or "").strip()
+        provider_requires_process = provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}
+        existing_copilot_status = str(current_item.get("copilot_status") or "").strip().lower()
+        existing_result_status = str(current_item.get("agent_result_status") or "").strip().lower()
+        existing_result_path = str(current_item.get("agent_result_path") or "").strip()
+        if (
+            existing_copilot_status in {"launched", "prepared"}
+            and existing_result_status in {"", "waiting"}
+            and existing_result_path
+            and (
+                not provider_requires_process
+                or _agent_process_is_running(str(current_item.get("copilot_process_id") or ""))
+            )
+        ):
+            return {
+                "status": existing_copilot_status,
+                "branch_name": effective_branch_name,
+                "context_path": str(current_item.get("copilot_context_path") or ""),
+                "workspace_path": workspace_path,
+                "agent_name": str(current_item.get("copilot_agent_name") or ""),
+                "agent_result_path": existing_result_path,
+                "cli_log_path": str(current_item.get("copilot_provider_log_path") or ""),
+                "cli_pid": str(current_item.get("copilot_process_id") or ""),
+            }
         agent_name = str(runtime_settings.get("copilot_agent_name") or "").strip()
         model_name = str(runtime_settings.get("copilot_model_name") or "").strip()
         distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip()
@@ -4869,6 +4931,12 @@ class AutomationService:
                         agent_result_status = str(current_item.get("agent_result_status") or "").strip().lower()
                         push_status = str(current_item.get("push_status") or "").strip().lower()
                         result_path = str(current_item.get("agent_result_path") or "").strip()
+                        runtime_provider = str(load_runtime_settings().get("copilot_provider") or "").strip()
+                        provider_requires_process = runtime_provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}
+                        provider_process_is_running = (
+                            not provider_requires_process
+                            or _agent_process_is_running(str(current_item.get("copilot_process_id") or ""))
+                        )
                         branch_name = str(
                             current_item.get("effective_branch_name")
                             or current_item.get("branch_name")
@@ -4879,11 +4947,12 @@ class AutomationService:
                             copilot_status in {"launched", "prepared"}
                             and agent_result_status in {"", "waiting"}
                             and bool(result_path)
+                            and provider_process_is_running
                         )
                         has_result_to_continue = (
                             bool(result_path)
                             and agent_result_status
-                            and agent_result_status not in {"", "error"}
+                            and agent_result_status not in {"", "waiting", "error"}
                         )
                         needs_agent_launch = (
                             push_status != "pushed"

@@ -205,6 +205,26 @@ ensure_github_copilot_cli() {
   npm install -g @github/copilot
 }
 
+ensure_persisted_github_copilot_home() {
+  local persisted_home backup_path timestamp
+  persisted_home="$CONTENT_AI_SETTINGS_PATH/copilot-home"
+
+  if [ -L "$HOME/.copilot" ]; then
+    return 0
+  fi
+
+  mkdir -p "$persisted_home"
+  chmod 700 "$persisted_home" || true
+  if [ -d "$HOME/.copilot" ]; then
+    cp -a "$HOME/.copilot/." "$persisted_home/"
+    timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
+    backup_path="$HOME/.copilot.local-backup-$timestamp"
+    mv "$HOME/.copilot" "$backup_path"
+    echo "Migrated the native GitHub Copilot CLI state to $persisted_home (backup: $backup_path)."
+  fi
+  ln -s "$persisted_home" "$HOME/.copilot"
+}
+
 content_ai_worktree_dirty() {
   [ -n "$(git -C "$CONTENT_AI_REPO_PATH" status --porcelain --untracked-files=all)" ]
 }
@@ -262,6 +282,7 @@ sync_content_ai_project() {
 }
 
 ensure_settings_path
+ensure_persisted_github_copilot_home
 restore_persisted_git_credentials
 configure_tfs_git_credentials
 ensure_codex_cli
