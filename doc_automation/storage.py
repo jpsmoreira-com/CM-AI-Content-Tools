@@ -68,6 +68,8 @@ def init_storage() -> None:
                 rerun_active INTEGER NOT NULL DEFAULT 0,
                 rerun_started_at TEXT,
                 auto_flow_enabled INTEGER NOT NULL DEFAULT 0,
+                auto_flow_runtime_status TEXT,
+                auto_flow_runtime_message TEXT,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (portal, work_item_id)
             )
@@ -98,6 +100,8 @@ def init_storage() -> None:
         _ensure_column(connection, "work_item_state", "rerun_active", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(connection, "work_item_state", "rerun_started_at", "TEXT")
         _ensure_column(connection, "work_item_state", "auto_flow_enabled", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(connection, "work_item_state", "auto_flow_runtime_status", "TEXT")
+        _ensure_column(connection, "work_item_state", "auto_flow_runtime_message", "TEXT")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS work_item_events (
@@ -685,6 +689,8 @@ def start_rerun_state(
                 rerun_active = 1,
                 rerun_started_at = ?,
                 auto_flow_enabled = 0,
+                auto_flow_runtime_status = '',
+                auto_flow_runtime_message = '',
                 updated_at = ?
             WHERE portal = ?
               AND work_item_id = ?
@@ -824,6 +830,40 @@ def mark_auto_flow_enabled(
             stage="Flow",
             status="enabled" if enabled else "disabled",
             message="Automatic flow enabled." if enabled else "Automatic flow disabled.",
+            created_at=timestamp,
+        )
+
+
+def mark_auto_flow_runtime_status(
+    *,
+    portal: str,
+    work_item_id: int,
+    status: str,
+    message: str,
+) -> None:
+    timestamp = utc_now()
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE work_item_state
+            SET auto_flow_runtime_status = ?,
+                auto_flow_runtime_message = ?,
+                updated_at = ?
+            WHERE portal = ?
+              AND work_item_id = ?
+            """,
+            (status, message, timestamp, portal, work_item_id),
+        )
+        _insert_work_item_event(
+            connection,
+            portal=portal,
+            work_item_id=work_item_id,
+            event_type="auto_flow_runtime",
+            stage="Flow",
+            status=status,
+            level="info",
+            message=message,
+            metadata={"runtime_status": status},
             created_at=timestamp,
         )
 

@@ -184,6 +184,12 @@ def dashboard(
     }
     for active_item in active_automation:
         active_item["title"] = active_item_titles.get(int(active_item["id"]), "Work item")
+    queued_automation = [
+        item for item in active_automation if str(item.get("auto_flow_runtime_status") or "") == "queued"
+    ]
+    in_progress_automation = [
+        item for item in active_automation if item not in queued_automation
+    ]
     runtime_settings = context.get("runtime_settings") or {}
     auto_refresh_seconds = 0
     if active_automation and bool(runtime_settings.get("automation_runner_enabled")):
@@ -201,6 +207,8 @@ def dashboard(
             "automation_runner": ORCHESTRATOR.snapshot(),
             "active_automation": active_automation,
             "active_automation_count": len(active_automation),
+            "queued_automation": queued_automation,
+            "in_progress_automation": in_progress_automation,
             "auto_refresh_seconds": auto_refresh_seconds,
         }
     )

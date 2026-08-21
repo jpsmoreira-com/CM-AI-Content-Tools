@@ -71,6 +71,7 @@ from .storage import (
     mark_agent_result,
     mark_agent_repair_started,
     mark_auto_flow_enabled,
+    mark_auto_flow_runtime_status,
     mark_branch_result,
     mark_copilot_result,
     mark_final_report,
@@ -2929,6 +2930,8 @@ class AutomationService:
                     "final_report_path": str(state.get("final_report_path") or ""),
                     "has_pr": bool(snapshot["has_pr"]),
                     "auto_flow_enabled": bool(snapshot["auto_flow_enabled"]),
+                    "auto_flow_runtime_status": str(state.get("auto_flow_runtime_status") or ""),
+                    "auto_flow_runtime_message": str(state.get("auto_flow_runtime_message") or ""),
                     "is_auto_flow_active": bool(snapshot["is_auto_flow_active"]),
                     "stage_label": summarize_automation_stage(snapshot),
                     "progress_steps": build_progress_steps(snapshot),
@@ -5081,14 +5084,11 @@ class AutomationService:
                 return
             _AUTO_WORKERS[key] = flow_token
 
-        record_work_item_event(
+        mark_auto_flow_runtime_status(
             portal=portal_name,
             work_item_id=int(work_item_id),
-            event_type="auto_flow_queued",
-            stage="Flow",
             status="queued",
-            message="Automatic flow queued for the planned work branch.",
-            metadata={"branch_name": planned_branch_name},
+            message="Queued for the shared repository workspace.",
         )
 
         thread = threading.Thread(
@@ -5130,15 +5130,18 @@ class AutomationService:
             with execution_runtime_scope(execution_runtime):
                 effective_distro, _ = normalize_wsl_target_path(workspace_path, configured_distro)
             workspace_lock = _get_workspace_lock(workspace_path)
+            mark_auto_flow_runtime_status(
+                portal=portal_name,
+                work_item_id=work_item_id,
+                status="queued",
+                message="Waiting for the shared repository workspace lock.",
+            )
             with workspace_lock:
-                record_work_item_event(
+                mark_auto_flow_runtime_status(
                     portal=portal_name,
                     work_item_id=work_item_id,
-                    event_type="auto_flow_started",
-                    stage="Flow",
                     status="running",
-                    message="Automatic flow is starting on the planned work branch.",
-                    metadata={"branch_name": planned_branch_name},
+                    message="Running in an isolated worktree for the planned work branch.",
                 )
                 deadline = time.monotonic() + AGENT_RESULT_POLL_TIMEOUT_SECONDS
                 while time.monotonic() < deadline:

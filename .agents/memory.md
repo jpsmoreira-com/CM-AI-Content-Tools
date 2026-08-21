@@ -79,6 +79,7 @@ Important: the Cherry Picks dashboard source is used as a reference. The integra
 - Autonomous CLI providers run in a dedicated per-branch Git worktree under `/workspaces/.content-ai-worktrees`. The configured workspace acts only as a dispatcher and is never checked out or modified by a work-item run.
 - When an agent result file already exists, the worker validates and continues it before considering any relaunch. This prevents the agent's own uncommitted changes from being mistaken for unrelated workspace changes.
 - After a successful Draft PR, the pipeline removes its isolated worktree and prunes Git worktree metadata. Reports remain in the configured persistent reports directory.
+- The Active Automation panel separates queued work items from work items running inside a worktree. Queue state is persisted locally and records when a work item is waiting for the shared repository lock.
 
 Framework decision:
 

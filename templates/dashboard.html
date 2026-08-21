@@ -188,20 +188,49 @@
             </div>
             <span class="live-automation-refresh">Updates every {{ auto_refresh_seconds }} seconds</span>
         </div>
-        <div class="live-automation-list" id="live-automation-list">
-            {% for item in active_automation %}
-            <div class="live-automation-item" data-live-work-item-id="{{ item.id }}">
-                <div class="live-automation-work-item">
-                    <a href="#work-item-{{ item.id }}">WI {{ item.id }}</a>
-                    <strong>{{ item.title }}</strong>
+        <div class="live-automation-groups">
+            <section class="live-automation-group" data-live-group-section="in_progress" {% if not in_progress_automation %}hidden{% endif %}>
+                <div class="live-automation-group-heading">
+                    <h3>Work Items In Progress</h3>
+                    <span data-live-group-count>{{ in_progress_automation|length }}</span>
                 </div>
-                <div class="live-automation-status">
-                    <strong data-live-stage>{{ item.stage_label }}</strong>
-                    <span data-live-message>{{ item.activity_message }}</span>
+                <div class="live-automation-list" data-live-group-list="in_progress">
+                    {% for item in in_progress_automation %}
+                    <div class="live-automation-item" data-live-work-item-id="{{ item.id }}">
+                        <div class="live-automation-work-item">
+                            <a href="#work-item-{{ item.id }}">WI {{ item.id }}</a>
+                            <strong>{{ item.title }}</strong>
+                        </div>
+                        <div class="live-automation-status">
+                            <strong data-live-stage>{{ item.stage_label }}</strong>
+                            <span data-live-message>{{ item.activity_message }}</span>
+                        </div>
+                        <time data-live-updated>{{ item.updated_at or "Waiting for first update" }}</time>
+                    </div>
+                    {% endfor %}
                 </div>
-                <time data-live-updated>{{ item.updated_at or "Waiting for first update" }}</time>
-            </div>
-            {% endfor %}
+            </section>
+            <section class="live-automation-group" data-live-group-section="queued" {% if not queued_automation %}hidden{% endif %}>
+                <div class="live-automation-group-heading">
+                    <h3>Work Items Queued</h3>
+                    <span data-live-group-count>{{ queued_automation|length }}</span>
+                </div>
+                <div class="live-automation-list" data-live-group-list="queued">
+                    {% for item in queued_automation %}
+                    <div class="live-automation-item" data-live-work-item-id="{{ item.id }}">
+                        <div class="live-automation-work-item">
+                            <a href="#work-item-{{ item.id }}">WI {{ item.id }}</a>
+                            <strong>{{ item.title }}</strong>
+                        </div>
+                        <div class="live-automation-status">
+                            <strong data-live-stage>{{ item.stage_label }}</strong>
+                            <span data-live-message>{{ item.auto_flow_runtime_message or item.activity_message }}</span>
+                        </div>
+                        <time data-live-updated>{{ item.updated_at or "Waiting for first update" }}</time>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
         </div>
     </div>
 </section>
@@ -424,6 +453,22 @@
             .filter(Boolean);
         const note = document.getElementById("live-refresh-note");
 
+        function getLiveGroup(status) {
+            return status.auto_flow_runtime_status === "queued" ? "queued" : "in_progress";
+        }
+
+        function refreshLiveGroups() {
+            document.querySelectorAll("[data-live-group-section]").forEach(function (section) {
+                const list = section.querySelector("[data-live-group-list]");
+                const count = list ? list.children.length : 0;
+                const countElement = section.querySelector("[data-live-group-count]");
+                if (countElement) {
+                    countElement.textContent = String(count);
+                }
+                section.hidden = count === 0;
+            });
+        }
+
         function setField(card, field, value) {
             const target = card.querySelector('[data-status-field="' + field + '"]');
             if (target) {
@@ -482,6 +527,15 @@
                     if (!liveItem) {
                         return;
                     }
+                    if (!status.is_auto_flow_active) {
+                        liveItem.remove();
+                        return;
+                    }
+                    const group = getLiveGroup(status);
+                    const destination = document.querySelector('[data-live-group-list="' + group + '"]');
+                    if (destination && liveItem.parentElement !== destination) {
+                        destination.appendChild(liveItem);
+                    }
                     const stage = liveItem.querySelector("[data-live-stage]");
                     const message = liveItem.querySelector("[data-live-message]");
                     const updated = liveItem.querySelector("[data-live-updated]");
@@ -489,12 +543,13 @@
                         stage.textContent = status.stage_label || "Updating";
                     }
                     if (message) {
-                        message.textContent = status.activity_message || "Checking local automation state.";
+                        message.textContent = status.auto_flow_runtime_message || status.activity_message || "Checking local automation state.";
                     }
                     if (updated) {
                         updated.textContent = status.updated_at || "Waiting for first update";
                     }
                 });
+                refreshLiveGroups();
                 if (note && activeCount === 0) {
                     note.classList.add("is-complete");
                 }
