@@ -1653,7 +1653,10 @@ def discover_workspace_instruction_files(distro: str, workspace_path: str) -> Li
     script = " ; ".join(
         [
             f"cd {_shell_quote(workspace_path)}",
-            '{ for file in "AGENTS.md" ".github/copilot-instructions.md"; do [ -f "$file" ] && printf "%s\\n" "$file"; done; if [ -d ".agents" ]; then find ".agents" -type f -name "*.md" | sort | head -n 24; fi; }',
+            # `.agents/content-ai` is managed by this pipeline bootstrap. It can
+            # contain copied helper documentation and duplicate instructions, but
+            # it is not a target-repository instruction source to acknowledge.
+            '{ for file in "AGENTS.md" ".github/copilot-instructions.md"; do [ -f "$file" ] && printf "%s\\n" "$file"; done; if [ -d ".agents" ]; then find ".agents" -path ".agents/content-ai" -prune -o -type f -name "*.md" -print | sort | head -n 24; fi; }',
         ]
     )
     result = _run_wsl_script(distro, script)
