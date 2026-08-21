@@ -975,3 +975,9 @@ Next recommended tasks:
 - The local Markdown link check was incorrectly failing links that already existed in the base revision and are resolved by the portal's MkDocs configuration. It now compares current broken-link targets against `HEAD` and fails only newly introduced unresolved targets. WI 157946 passed `git diff --check` and the baseline-aware link validation; markdownlint was unavailable in the active container and was recorded as skipped.
 - The first dashboard commit attempt exposed that the container had no Git author identity. Configured the test worktree locally as `Luís Pereira <LuisPereira@criticalmanufacturing.com>` and recorded a follow-up: add Git author name/email to the Settings preflight and bootstrap, rather than discovering it during commit.
 - The completed run created commit `146c7ef25` (`Docs: update for WI 157946`), pushed the rerun branch, and created Draft PR `#91499`.
+
+2026-08-21 Automation observability and Draft PR report resilience:
+
+- Added a compact `Active Automation` panel at the beginning of the dashboard for visible work items with an active automatic flow. It polls persisted local state every 10 to 15 seconds without reloading TFS and reports the current durable pipeline activity.
+- The status message is derived from branch, agent, result, push, and Draft PR state, so it survives dashboard restarts and remains separate from the orchestration worker.
+- A missing concise agent summary no longer blocks a successful push from creating a Draft PR. The pipeline first starts one metadata-only agent repair that must rewrite `agent-result.json` without editing repository files. If no usable summary is available after that attempt, the Draft PR uses a safe summary from the final report or changed-file list and records the fallback in the event history.

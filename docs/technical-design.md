@@ -351,6 +351,12 @@ The orchestrator is responsible for durable progression of the pipeline after th
 
 For the MVP, the dashboard process starts an embedded runner and `run_worker.py` exposes the same loop for future service deployment. The long-term deployment shape should keep the dashboard as a control plane and run the orchestrator as a dedicated service process.
 
+### Live Automation Status
+
+The dashboard exposes active work items in a lightweight status panel near the top of the page. It reads the persisted SQLite state only and polls the existing local status endpoint every 10 to 15 seconds while an automatic flow is active. It does not refresh TFS work items or start another worker loop. The displayed message is derived from durable branch, provider, result, push, and Draft PR state, so it remains useful after a dashboard restart and never depends on a transient browser session.
+
+The Draft PR stage is resilient to incomplete agent reporting. When a green-light result has no concise summary, the automatic flow first launches one reporting-only repair session that must update `agent-result.json` without editing repository files. If that repair cannot produce a usable summary, the dashboard creates the Draft PR using a safe summary derived from the final report or the validated changed-files list and records that fallback in the work item event history.
+
 ### 7.7 Approval Gate
 
 No external action should happen without human approval in the early phases.

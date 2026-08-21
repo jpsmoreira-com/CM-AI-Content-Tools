@@ -75,6 +75,7 @@ from .storage import (
     mark_final_report,
     mark_pr_result,
     mark_push_result,
+    record_work_item_event,
     save_work_item_plan,
     start_rerun_state,
 )
@@ -2909,6 +2910,7 @@ class AutomationService:
                 "pr_error": str(state.get("pr_error") or ""),
             }
             snapshot["is_auto_flow_active"] = is_auto_flow_active(snapshot)
+            activity_message, activity_level = self._describe_live_automation_activity(snapshot)
             snapshots.append(
                 {
                     "id": int(work_item_id),
@@ -2926,9 +2928,32 @@ class AutomationService:
                     "stage_label": summarize_automation_stage(snapshot),
                     "progress_steps": build_progress_steps(snapshot),
                     "updated_at": str(state.get("updated_at") or ""),
+                    "activity_message": activity_message,
+                    "activity_level": activity_level,
                 }
             )
         return snapshots
+
+    @staticmethod
+    def _describe_live_automation_activity(state: Dict[str, Any]) -> tuple[str, str]:
+        branch_status = str(state.get("branch_status") or "").strip().lower()
+        agent_status = str(state.get("copilot_status") or "").strip().lower()
+        result_status = str(state.get("agent_result_status") or "").strip().lower()
+        push_status = str(state.get("push_status") or "").strip().lower()
+        pr_status = str(state.get("pr_status") or "").strip().lower()
+        if pr_status in {"created", "exists"}:
+            return "Draft PR is ready for reviewer validation.", "success"
+        if push_status == "pushed":
+            return "Changes are pushed. Creating the Draft PR.", "info"
+        if result_status in {"green_light", "ready_for_push", "success"}:
+            return "Agent result is ready. Validating and pushing the approved changes.", "info"
+        if result_status in {"error", "invalid", "needs_agent_fix", "blocked"}:
+            return "Automation needs attention. Open the work item for the recommended next step.", "error"
+        if agent_status in {"launched", "prepared"} or result_status == "waiting":
+            return "Agent is analysing the captured context and preparing documentation changes.", "info"
+        if branch_status in {"created", "exists", "detected"}:
+            return "Work branch is ready. Preparing the documentation context for the agent.", "info"
+        return "Creating the work branch and preparing the automation flow.", "info"
 
     def _get_live_work_item(self, portal_name: str, work_item_id: int) -> Dict[str, Any]:
         config = load_app_config()
@@ -3734,6 +3759,63 @@ class AutomationService:
             target_branch,
             statuses=["active", "completed"],
         )
+        draft_summary, draft_summary_source = self._resolve_draft_pr_summary(portal, current_item)
+        if (
+            draft_summary_source != "agent_result"
+            and bool(current_item.get("auto_flow_enabled"))
+            and self._can_start_agent_repair(current_item, allow_pushed=True)
+        ):
+            previous_result: Dict[str, Any] = {}
+            result_path = str(current_item.get("agent_result_path") or "").strip()
+            if result_path:
+                runtime_settings = load_runtime_settings()
+                workspace_path = str(
+                    current_item.get("copilot_workspace_path")
+                    or portal.get("copilot_workspace_path")
+                    or ""
+                ).strip()
+                with execution_runtime_scope(str(runtime_settings.get("execution_runtime") or "devcontainer")):
+                    effective_distro, _ = normalize_wsl_target_path(
+                        workspace_path,
+                        str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
+                    )
+                    previous_result = read_agent_result(effective_distro, result_path)
+            if bool(previous_result.get("green_light")):
+                try:
+                    repair = self._launch_agent_repair_session(
+                        portal_name=portal_name,
+                        current_item=current_item,
+                        previous_result=previous_result,
+                        repair_reason="The agent result is missing the concise summary required for the Draft PR description.",
+                        iteration_path=iteration_path,
+                        triage_status=triage_status,
+                        selected_base_branch=selected_base_branch,
+                        work_type=work_type,
+                        planned_branch_name=planned_branch_name,
+                        summary_only=True,
+                    )
+                    return {
+                        "status": "summary-repair-launched",
+                        "detail": "A reporting-only agent repair was launched to restore the missing Draft PR summary.",
+                        "repair": repair,
+                    }
+                except (ServiceError, CopilotIntegrationError):
+                    # The safe fallback below keeps a successful push from being stranded by report metadata.
+                    pass
+        if draft_summary_source != "agent_result":
+            record_work_item_event(
+                portal=portal_name,
+                work_item_id=work_item_id,
+                event_type="draft_pr_summary_fallback",
+                stage="Draft PR",
+                status="summary-recovered",
+                level="warning",
+                message=(
+                    "The agent did not return a concise summary. "
+                    f"The Draft PR description used a safe {draft_summary_source.replace('_', ' ')} fallback."
+                ),
+                metadata={"summary_source": draft_summary_source, "summary": draft_summary},
+            )
         reviewer_id = str(plan["reviewer_id"])
         reviewer_unique_name = str(plan["reviewer_unique_name"])
 
@@ -3799,12 +3881,13 @@ class AutomationService:
             "url": str(pr_url),
         }
 
-    def _resolve_draft_pr_summary(self, portal: Dict[str, Any], current_item: Dict[str, Any]) -> str:
+    def _resolve_draft_pr_summary(self, portal: Dict[str, Any], current_item: Dict[str, Any]) -> tuple[str, str]:
         stored_summary = str(current_item.get("agent_result_summary") or "").strip()
         if stored_summary:
-            return stored_summary
+            return stored_summary, "agent_result"
 
         result_path = str(current_item.get("agent_result_path") or "").strip()
+        result: Dict[str, Any] = {}
         if result_path:
             runtime_settings = load_runtime_settings()
             workspace_path = str(
@@ -3819,9 +3902,29 @@ class AutomationService:
                 result = read_agent_result(effective_distro, result_path)
             result_summary = str(result.get("summary") or "").strip()
             if result_summary:
-                return result_summary
+                return result_summary, "agent_result"
 
-        raise ServiceError("The agent result must include a concise summary before creating the draft PR.")
+        final_report = self._resolve_final_report_text(current_item)
+        report_sections = markdown_h2_sections(final_report) if final_report else {}
+        for section_name in ("Summary", "Changes Made"):
+            candidate = str(report_sections.get(section_name) or "").strip()
+            if candidate and not candidate.lower().startswith("no summary was reported"):
+                return truncate_text(candidate, 700, "..."), "final_report"
+
+        changed_files = list(result.get("changed_files") or [])
+        if changed_files:
+            file_labels = ", ".join(f"`{path}`" for path in changed_files[:4])
+            if len(changed_files) > 4:
+                file_labels += ", and additional files"
+            return (
+                f"Documentation updates for WI {current_item['id']} were completed in {file_labels}.",
+                "changed_files",
+            )
+
+        return (
+            f"Documentation updates for WI {current_item['id']} were prepared on the source branch.",
+            "pipeline_fallback",
+        )
 
     def _resolve_final_report_text(self, current_item: Dict[str, Any]) -> str:
         report_path = str(current_item.get("final_report_path") or "").strip()
@@ -3840,7 +3943,7 @@ class AutomationService:
         portal: Dict[str, Any],
         current_item: Dict[str, Any],
     ) -> str:
-        change_summary = self._resolve_draft_pr_summary(portal, current_item)
+        change_summary, _ = self._resolve_draft_pr_summary(portal, current_item)
         final_report = self._resolve_final_report_text(current_item)
         footer_lines = ["", f"Work item link: {plan['url']}"]
         footer = "\n".join(footer_lines)
@@ -4355,10 +4458,47 @@ class AutomationService:
         ]
         return "\n".join(lines)
 
-    def _can_start_agent_repair(self, current_item: Dict[str, Any]) -> bool:
+    def _build_agent_summary_repair_prompt_template(
+        self,
+        *,
+        current_item: Dict[str, Any],
+        previous_result: Dict[str, Any],
+        repair_reason: str,
+    ) -> str:
+        previous_result_path = str(current_item.get("agent_result_path") or "").strip()
+        changed_files = "\n".join(
+            f"- `{path}`" for path in list(previous_result.get("changed_files") or [])
+        ) or "- No changed files were reported."
+        return "\n".join(
+            [
+                "Repair only the automation result metadata for this completed work item.",
+                "",
+                "Do not edit repository files, do not run Git commands, and do not run builds or validation.",
+                "The documentation changes were already reviewed by the dashboard and may already be pushed.",
+                "",
+                "Reason for this repair:",
+                repair_reason.strip() or "The previous result did not include a concise summary.",
+                "",
+                "Previous result file:",
+                f"`{previous_result_path or '-'}`",
+                "",
+                "Previous changed files:",
+                changed_files,
+                "",
+                "Required outcome:",
+                "- Read the previous result and the packaged work item context.",
+                "- Write a complete replacement JSON object to `{{agent_result_path}}`.",
+                "- Preserve the existing changed-files and evidence information whenever it is valid.",
+                "- Add a concise, factual `summary` that explains the completed documentation update.",
+                "- Keep `green_light` true only when the previous result was already green-lighted.",
+                "- Do not create commits or pull requests; the dashboard controls those steps.",
+            ]
+        )
+
+    def _can_start_agent_repair(self, current_item: Dict[str, Any], *, allow_pushed: bool = False) -> bool:
         if current_item.get("has_pr"):
             return False
-        if str(current_item.get("push_status") or "").strip().lower() == "pushed":
+        if not allow_pushed and str(current_item.get("push_status") or "").strip().lower() == "pushed":
             return False
         repair_count = int(current_item.get("agent_repair_count") or 0)
         return repair_count < MAX_AUTOMATIC_AGENT_REPAIR_ATTEMPTS
@@ -4375,6 +4515,7 @@ class AutomationService:
         selected_base_branch: str = "",
         work_type: str = "",
         planned_branch_name: str = "",
+        summary_only: bool = False,
     ) -> Dict[str, Any]:
         portal = get_portal_config(load_app_config(), portal_name)
         runtime_settings = load_runtime_settings()
@@ -4396,10 +4537,18 @@ class AutomationService:
         if repair_count <= 0:
             raise ServiceError("The automatic agent repair attempt limit has already been reached for this work item.")
 
-        prompt_template = self._build_agent_repair_prompt_template(
-            current_item=current_item,
-            previous_result=previous_result,
-            repair_reason=repair_reason,
+        prompt_template = (
+            self._build_agent_summary_repair_prompt_template(
+                current_item=current_item,
+                previous_result=previous_result,
+                repair_reason=repair_reason,
+            )
+            if summary_only
+            else self._build_agent_repair_prompt_template(
+                current_item=current_item,
+                previous_result=previous_result,
+                repair_reason=repair_reason,
+            )
         )
         if provider == "vscode" and bool(runtime_settings.get("copilot_vscode_apply_settings")):
             self._apply_vscode_copilot_settings(
@@ -4867,6 +5016,12 @@ class AutomationService:
                 work_type=work_type,
                 planned_branch_name=planned_branch_name,
             )
+            if pr_result.get("status") == "summary-repair-launched":
+                return {
+                    "status": "waiting-for-agent",
+                    "detail": str(pr_result.get("detail") or "Waiting for the reporting-only agent repair."),
+                    "pr": pr_result,
+                }
             return {
                 "status": "completed",
                 "detail": f"Pushed commit {str(push_result.get('commit') or '').strip() or '-'} and created PR #{pr_result['pull_request_id']}.",

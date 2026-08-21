@@ -180,10 +180,29 @@
 
 {% if auto_refresh_seconds %}
 <section class="band">
-    <div class="live-refresh-note" id="live-refresh-note">
-        <strong>{{ active_automation_count }}</strong>
-        automatic flow{% if active_automation_count != 1 %}s{% endif %} in progress.
-        This page checks progress every {{ auto_refresh_seconds }} seconds while background work is active.
+    <div class="live-automation-panel" id="live-refresh-note">
+        <div class="live-automation-heading">
+            <div>
+                <span class="section-kicker">Active Automation</span>
+                <h2>{{ active_automation_count }} work item{% if active_automation_count != 1 %}s{% endif %} in progress</h2>
+            </div>
+            <span class="live-automation-refresh">Updates every {{ auto_refresh_seconds }} seconds</span>
+        </div>
+        <div class="live-automation-list" id="live-automation-list">
+            {% for item in active_automation %}
+            <div class="live-automation-item" data-live-work-item-id="{{ item.id }}">
+                <div class="live-automation-work-item">
+                    <a href="#work-item-{{ item.id }}">WI {{ item.id }}</a>
+                    <strong>{{ item.title }}</strong>
+                </div>
+                <div class="live-automation-status">
+                    <strong data-live-stage>{{ item.stage_label }}</strong>
+                    <span data-live-message>{{ item.activity_message }}</span>
+                </div>
+                <time data-live-updated>{{ item.updated_at or "Waiting for first update" }}</time>
+            </div>
+            {% endfor %}
+        </div>
     </div>
 </section>
 {% endif %}
@@ -226,6 +245,7 @@
         <div class="work-item-list">
             {% for item in items %}
             <details
+                id="work-item-{{ item.id }}"
                 class="work-item-card {{ item.state_class }}"
                 data-work-item-id="{{ item.id }}"
                 data-detail-url="{{ request.url_for('work_item_detail', work_item_id=item.id) }}?portal={{ selected_portal|urlencode }}&iteration_path={{ selected_iteration|urlencode }}&current_iteration_only={{ 'true' if current_iteration_only else 'false' }}&hide_closed={{ 'true' if hide_closed else 'false' }}"
@@ -457,8 +477,26 @@
                         activeCount += 1;
                     }
                 });
+                statuses.forEach(function (status) {
+                    const liveItem = document.querySelector('[data-live-work-item-id="' + status.id + '"]');
+                    if (!liveItem) {
+                        return;
+                    }
+                    const stage = liveItem.querySelector("[data-live-stage]");
+                    const message = liveItem.querySelector("[data-live-message]");
+                    const updated = liveItem.querySelector("[data-live-updated]");
+                    if (stage) {
+                        stage.textContent = status.stage_label || "Updating";
+                    }
+                    if (message) {
+                        message.textContent = status.activity_message || "Checking local automation state.";
+                    }
+                    if (updated) {
+                        updated.textContent = status.updated_at || "Waiting for first update";
+                    }
+                });
                 if (note && activeCount === 0) {
-                    note.innerHTML = "<strong>All visible automatic flows finished.</strong> The latest local pipeline state is shown below.";
+                    note.classList.add("is-complete");
                 }
             } catch (error) {
                 return;

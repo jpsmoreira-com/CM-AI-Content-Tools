@@ -174,12 +174,22 @@ def dashboard(
         for item in list(context.get("items") or [])
         if bool(item.get("is_auto_flow_active"))
     ]
+    active_automation = SERVICE.get_local_status_snapshots(
+        portal_name=str(context.get("selected_portal") or portal),
+        work_item_ids=[int(item["id"]) for item in active_automation_items],
+    )
+    active_item_titles = {
+        int(item["id"]): str(item.get("title") or "Work item")
+        for item in active_automation_items
+    }
+    for active_item in active_automation:
+        active_item["title"] = active_item_titles.get(int(active_item["id"]), "Work item")
     runtime_settings = context.get("runtime_settings") or {}
     auto_refresh_seconds = 0
-    if active_automation_items and bool(runtime_settings.get("automation_runner_enabled")):
+    if active_automation and bool(runtime_settings.get("automation_runner_enabled")):
         auto_refresh_seconds = max(
             10,
-            min(30, int(runtime_settings.get("automation_reconcile_interval_seconds") or 30)),
+            min(15, int(runtime_settings.get("automation_reconcile_interval_seconds") or 15)),
         )
     context.update(
         {
@@ -189,7 +199,8 @@ def dashboard(
             "level": level,
             "active_page": "dashboard",
             "automation_runner": ORCHESTRATOR.snapshot(),
-            "active_automation_count": len(active_automation_items),
+            "active_automation": active_automation,
+            "active_automation_count": len(active_automation),
             "auto_refresh_seconds": auto_refresh_seconds,
         }
     )
@@ -889,6 +900,19 @@ def create_draft_pr(
             work_type=work_type,
             planned_branch_name=planned_branch_name,
         )
+        if result.get("status") == "summary-repair-launched":
+            return _redirect_to_dashboard(
+                request,
+                portal=portal,
+                iteration_path=iteration_path,
+                current_iteration_only=_parse_optional_bool(current_iteration_only),
+                hide_closed=_parse_optional_bool(hide_closed),
+                message=(
+                    f"WI {work_item_id}: a reporting-only agent repair started to restore the missing Draft PR summary. "
+                    "The pipeline will create the Draft PR when that result is ready."
+                ),
+                level="warning",
+            )
         state_label = "reused existing draft PR" if result["status"] == "exists" else "created draft PR"
         return _redirect_to_dashboard(
             request,

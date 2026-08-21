@@ -534,6 +534,72 @@ button[disabled] {
     color: var(--success);
 }
 
+.live-automation-panel {
+    border: 1px solid #b7dfc3;
+    border-radius: 8px;
+    background: #f5fbf7;
+    padding: 1rem 1.1rem;
+}
+
+.live-automation-panel.is-complete {
+    border-color: var(--border);
+    background: var(--surface);
+}
+
+.live-automation-heading,
+.live-automation-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.live-automation-heading {
+    margin-bottom: 0.8rem;
+}
+
+.live-automation-heading h2 {
+    margin: 0.15rem 0 0;
+    font-size: 1.1rem;
+}
+
+.live-automation-refresh,
+.live-automation-item time {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.live-automation-list {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.live-automation-item {
+    border-top: 1px solid var(--border);
+    padding-top: 0.7rem;
+}
+
+.live-automation-work-item,
+.live-automation-status {
+    display: grid;
+    gap: 0.2rem;
+}
+
+.live-automation-work-item {
+    min-width: min(380px, 36%);
+}
+
+.live-automation-work-item strong,
+.live-automation-status span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live-automation-status {
+    flex: 1;
+}
+
 .metric {
     background: var(--surface-alt);
     border: 1px solid var(--border);
@@ -1842,6 +1908,17 @@ details p {
 
     .summary-panel {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .live-automation-heading,
+    .live-automation-item {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 0.45rem;
+    }
+
+    .live-automation-work-item {
+        min-width: 0;
     }
 
     .settings-control-panel {
