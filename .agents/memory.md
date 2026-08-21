@@ -987,3 +987,9 @@ Next recommended tasks:
 - Added a compact `Active Automation` panel at the beginning of the dashboard for visible work items with an active automatic flow. It polls persisted local state every 10 to 15 seconds without reloading TFS and reports the current durable pipeline activity.
 - The status message is derived from branch, agent, result, push, and Draft PR state, so it survives dashboard restarts and remains separate from the orchestration worker.
 - A missing concise agent summary no longer blocks a successful push from creating a Draft PR. The pipeline first starts one metadata-only agent repair that must rewrite `agent-result.json` without editing repository files. If no usable summary is available after that attempt, the Draft PR uses a safe summary from the final report or changed-file list and records the fallback in the event history.
+
+2026-08-21 Isolated worktree repair continuity:
+
+- Work item state persists the isolated `copilot_workspace_path` returned by the agent launcher. Item reconstruction must always prefer that persisted path over the portal's configured dispatcher workspace.
+- This is essential after an agent result needs repair: the repair prompt, instruction acknowledgement, Git preflight, and change validation must run in the work item's own worktree, never in `/app`.
+- A two-item concurrent rerun (WI 157946 and WI 157980) exposed the previous precedence bug. Both isolated worktrees and their agent results were correct, but state reconstruction replaced their paths with `/app`, causing a false branch-mismatch error and preventing the automatic repair from starting.

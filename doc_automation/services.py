@@ -2126,7 +2126,10 @@ class AutomationService:
             "copilot_status": copilot_status,
             "copilot_error": copilot_error,
             "copilot_context_path": str((state or {}).get("copilot_context_path") or ""),
-            "copilot_workspace_path": str(portal.get("copilot_workspace_path") or (state or {}).get("copilot_workspace_path") or ""),
+            # A launched automation run persists its isolated worktree here. Keep it
+            # ahead of the portal default so later checks and repair runs do not
+            # accidentally fall back to the shared dispatcher workspace (/app).
+            "copilot_workspace_path": str((state or {}).get("copilot_workspace_path") or portal.get("copilot_workspace_path") or ""),
             "copilot_agent_name": str((state or {}).get("copilot_agent_name") or runtime_settings.get("copilot_agent_name") or ""),
             "copilot_provider_log_path": str((state or {}).get("copilot_provider_log_path") or ""),
             "copilot_process_id": str((state or {}).get("copilot_process_id") or ""),
