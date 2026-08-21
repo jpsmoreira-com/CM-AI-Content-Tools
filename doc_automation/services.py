@@ -98,7 +98,7 @@ AGENT_RESULT_STABILITY_SECONDS = 45.0
 VSCODE_STALE_WAIT_RELAUNCH_SECONDS = 300.0
 MAX_AUTOMATIC_AGENT_REPAIR_ATTEMPTS = 1
 _AUTO_WORKER_LOCK = threading.Lock()
-_AUTO_WORKERS: set[tuple[str, int]] = set()
+_AUTO_WORKERS: Dict[tuple[str, int], str] = {}
 _WORKSPACE_LOCKS_LOCK = threading.Lock()
 _WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}
 GIT_CREDENTIAL_SOURCE_ENV = "CONTENT_AI_HOST_GIT_CREDENTIALS_PATH"
@@ -5046,10 +5046,21 @@ class AutomationService:
         planned_branch_name: str = "",
     ) -> None:
         key = (portal_name, int(work_item_id))
+        flow_token = str(planned_branch_name or "").strip() or f"{iteration_path}|{work_type}"
         with _AUTO_WORKER_LOCK:
-            if key in _AUTO_WORKERS:
+            if _AUTO_WORKERS.get(key) == flow_token:
                 return
-            _AUTO_WORKERS.add(key)
+            _AUTO_WORKERS[key] = flow_token
+
+        record_work_item_event(
+            portal=portal_name,
+            work_item_id=int(work_item_id),
+            event_type="auto_flow_queued",
+            stage="Flow",
+            status="queued",
+            message="Automatic flow queued for the planned work branch.",
+            metadata={"branch_name": planned_branch_name},
+        )
 
         thread = threading.Thread(
             target=self._auto_completion_worker,
@@ -5062,6 +5073,7 @@ class AutomationService:
                 "selected_base_branch": selected_base_branch,
                 "work_type": work_type,
                 "planned_branch_name": planned_branch_name,
+                "flow_token": flow_token,
             },
             daemon=True,
         )
@@ -5078,16 +5090,45 @@ class AutomationService:
         selected_base_branch: str,
         work_type: str,
         planned_branch_name: str,
+        flow_token: str,
     ) -> None:
         try:
             portal, _ = self._get_action_item(portal_name, work_item_id)
             workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
             workspace_lock = _get_workspace_lock(workspace_path)
             with workspace_lock:
+                record_work_item_event(
+                    portal=portal_name,
+                    work_item_id=work_item_id,
+                    event_type="auto_flow_started",
+                    stage="Flow",
+                    status="running",
+                    message="Automatic flow is starting on the planned work branch.",
+                    metadata={"branch_name": planned_branch_name},
+                )
                 deadline = time.monotonic() + AGENT_RESULT_POLL_TIMEOUT_SECONDS
                 while time.monotonic() < deadline:
                     try:
                         _, current_item = self._get_action_item(portal_name, work_item_id)
+                        current_branch_name = str(
+                            current_item.get("effective_branch_name")
+                            or current_item.get("branch_name")
+                            or ""
+                        ).strip()
+                        if planned_branch_name and current_branch_name and current_branch_name != planned_branch_name:
+                            record_work_item_event(
+                                portal=portal_name,
+                                work_item_id=work_item_id,
+                                event_type="auto_flow_superseded",
+                                stage="Flow",
+                                status="superseded",
+                                message="A newer rerun replaced this automatic flow before it started.",
+                                metadata={
+                                    "expected_branch_name": planned_branch_name,
+                                    "current_branch_name": current_branch_name,
+                                },
+                            )
+                            return
                         if current_item.get("has_pr"):
                             return
 
@@ -5165,4 +5206,5 @@ class AutomationService:
             mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
         finally:
             with _AUTO_WORKER_LOCK:
-                _AUTO_WORKERS.discard(key)
+                if _AUTO_WORKERS.get(key) == flow_token:
+                    _AUTO_WORKERS.pop(key, None)
