@@ -36,6 +36,7 @@ from .copilot import (
     read_agent_result,
     read_agent_provider_status,
     read_wsl_text_file,
+    remove_isolated_agent_worktree,
     start_codex_device_login,
     start_github_copilot_device_login,
     validate_agent_changes_for_push,
@@ -3879,11 +3880,34 @@ class AutomationService:
             pr_url=str(pr_url),
             pr_error="",
         )
+        cleanup_result: Dict[str, str] = {"status": "skipped", "message": "No automation worktree cleanup was required."}
+        workspace_path = str(current_item.get("copilot_workspace_path") or "").strip()
+        if workspace_path:
+            runtime_settings = load_runtime_settings()
+            execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+            configured_distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip()
+            try:
+                with execution_runtime_scope(execution_runtime):
+                    effective_distro, _ = normalize_wsl_target_path(workspace_path, configured_distro)
+                    cleanup_result = remove_isolated_agent_worktree(effective_distro, workspace_path)
+            except CopilotIntegrationError as exc:
+                cleanup_result = {"status": "warning", "message": str(exc)}
+            record_work_item_event(
+                portal=portal_name,
+                work_item_id=work_item_id,
+                event_type="worktree_cleanup",
+                stage="Cleanup",
+                status=str(cleanup_result.get("status") or "skipped"),
+                level="warning" if cleanup_result.get("status") == "warning" else "success",
+                message=str(cleanup_result.get("message") or "Worktree cleanup completed."),
+                metadata={"workspace_path": workspace_path},
+            )
         self._invalidate_portal_repository_cache(portal_name)
         return {
             "status": pr_status,
             "pull_request_id": pull_request_id,
             "url": str(pr_url),
+            "worktree_cleanup": cleanup_result,
         }
 
     def _resolve_draft_pr_summary(self, portal: Dict[str, Any], current_item: Dict[str, Any]) -> tuple[str, str]:
@@ -5100,6 +5124,11 @@ class AutomationService:
         try:
             portal, _ = self._get_action_item(portal_name, work_item_id)
             workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
+            runtime_settings = load_runtime_settings()
+            execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+            configured_distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip()
+            with execution_runtime_scope(execution_runtime):
+                effective_distro, _ = normalize_wsl_target_path(workspace_path, configured_distro)
             workspace_lock = _get_workspace_lock(workspace_path)
             with workspace_lock:
                 record_work_item_event(
@@ -5141,7 +5170,7 @@ class AutomationService:
                         agent_result_status = str(current_item.get("agent_result_status") or "").strip().lower()
                         push_status = str(current_item.get("push_status") or "").strip().lower()
                         result_path = str(current_item.get("agent_result_path") or "").strip()
-                        runtime_provider = str(load_runtime_settings().get("copilot_provider") or "").strip()
+                        runtime_provider = str(runtime_settings.get("copilot_provider") or "").strip()
                         provider_requires_process = runtime_provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}
                         provider_process_is_running = (
                             not provider_requires_process
@@ -5164,10 +5193,16 @@ class AutomationService:
                             and agent_result_status
                             and agent_result_status not in {"", "waiting"}
                         )
+                        result_file_exists = False
+                        if result_path:
+                            with execution_runtime_scope(execution_runtime):
+                                result_file = inspect_agent_result_file(effective_distro, result_path)
+                            result_file_exists = bool(result_file.get("exists"))
                         needs_agent_launch = (
                             push_status != "pushed"
                             and not provider_is_waiting
                             and not has_result_to_continue
+                            and not result_file_exists
                         )
 
                         if needs_agent_launch:

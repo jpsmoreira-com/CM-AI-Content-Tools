@@ -24,6 +24,7 @@ DOCX_RE = re.compile(r"\b[^\\/\s<>:\"|?*]+\.(?:docx|docm|doc)\b", re.IGNORECASE)
 IMG_SRC_RE = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
 CUSTOM_AGENT_FILE_BASENAME = "cmf-tfs-doc-automation"
 WORKSPACE_CONTEXT_ROOT = ".automation-context/copilot"
+ISOLATED_WORKTREE_ROOT = "/workspaces/.content-ai-worktrees"
 VSCODE_BRIDGE_STATUS_FILE = "bridge-status.json"
 EXECUTION_RUNTIME_DEVCONTAINER = "devcontainer"
 EXECUTION_RUNTIME_WINDOWS_HOST = "windows_host"
@@ -1491,12 +1492,12 @@ def _ensure_git_workspace(distro: str, workspace_path: str) -> None:
         raise CopilotIntegrationError("The configured workspace path is not a Git repository.")
 
 
-def _prepare_isolated_vscode_bridge_worktree(
+def _prepare_isolated_agent_worktree(
     distro: str,
     workspace_path: str,
     branch_name: str,
 ) -> str:
-    """Create or reuse a per-branch worktree without moving the dispatcher workspace."""
+    """Create or reuse a clean per-branch worktree for an autonomous agent run."""
     source_path = str(workspace_path or "").strip().rstrip("/")
     clean_branch = str(branch_name or "").strip()
     if not source_path or not clean_branch:
@@ -1510,7 +1511,7 @@ def _prepare_isolated_vscode_bridge_worktree(
             'repository_root="$(git -C \"$source_path\" rev-parse --show-toplevel)"',
             'repository_name="$(basename \"$repository_root\")"',
             'branch_slug="$(printf %s \"$branch_name\" | tr "/\\\\ :" "----" | tr -cs "[:alnum:]._-" "-")"',
-            'worktree_root="/workspaces/.content-ai-worktrees/$repository_name"',
+            f'worktree_root="{ISOLATED_WORKTREE_ROOT}/$repository_name"',
             'target_path="$worktree_root/$branch_slug"',
             'if [ -d "$target_path" ]; then',
             '  git -C "$target_path" rev-parse --is-inside-work-tree >/dev/null',
@@ -1536,7 +1537,7 @@ def _prepare_isolated_vscode_bridge_worktree(
         raise CopilotIntegrationError(
             result.stderr.strip()
             or result.stdout.strip()
-            or f"Failed to prepare an isolated VS Code worktree for '{clean_branch}'."
+            or f"Failed to prepare an isolated agent worktree for '{clean_branch}'."
         )
     # Git writes informational worktree messages to stdout on some versions.
     # The final emitted line is the only contract value: the worktree path.
@@ -1545,6 +1546,32 @@ def _prepare_isolated_vscode_bridge_worktree(
     if not target_path:
         raise CopilotIntegrationError("The isolated VS Code worktree path could not be resolved.")
     return target_path
+
+
+def remove_isolated_agent_worktree(distro: str, workspace_path: str) -> Dict[str, str]:
+    """Remove a completed pipeline worktree without touching a configured workspace."""
+    clean_workspace_path = str(workspace_path or "").strip().replace("\\", "/").rstrip("/")
+    worktree_root = ISOLATED_WORKTREE_ROOT.rstrip("/")
+    if not clean_workspace_path.startswith(worktree_root + "/"):
+        return {"status": "skipped", "message": "Workspace is not owned by the automation worktree root."}
+
+    script = "\n".join(
+        [
+            "set -eu",
+            f"target_path={_shell_quote(clean_workspace_path)}",
+            'git -C "$target_path" rev-parse --is-inside-work-tree >/dev/null',
+            'git -C "$target_path" worktree prune',
+            'git -C "$target_path" worktree remove --force "$target_path"',
+        ]
+    )
+    result = _run_wsl_script(distro, script, timeout_seconds=180)
+    if result.returncode != 0:
+        raise CopilotIntegrationError(
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"Failed to remove completed automation worktree '{clean_workspace_path}'."
+        )
+    return {"status": "removed", "message": f"Removed completed automation worktree {clean_workspace_path}."}
 
 
 def _ensure_workspace_context_excluded(distro: str, workspace_path: str) -> None:
@@ -2745,11 +2772,16 @@ def prepare_cm_gpt_handoff(
     dispatcher_workspace_path = clean_workspace_path
     _, normalized_reference_docs_path = normalize_wsl_target_path(reference_docs_path, effective_distro)
 
-    # A Remote VS Code window cannot reliably open a second window for the very
-    # same folder. Give bridge jobs a dedicated worktree instead, so the active
-    # dashboard workspace keeps its branch while the work item runs elsewhere.
-    if clean_provider == "vscode_bridge" and str(vscode_window_mode or "").strip() == "new":
-        clean_workspace_path = _prepare_isolated_vscode_bridge_worktree(
+    # Autonomous executors must never switch or dirty the dispatcher workspace.
+    # A dedicated worktree keeps each work-item branch independent from the
+    # dashboard repository and from other in-flight automation runs.
+    isolated_worktree_providers = {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}
+    should_use_isolated_worktree = (
+        clean_provider in isolated_worktree_providers
+        or (clean_provider == "vscode_bridge" and str(vscode_window_mode or "").strip() == "new")
+    )
+    if should_use_isolated_worktree:
+        clean_workspace_path = _prepare_isolated_agent_worktree(
             effective_distro,
             clean_workspace_path,
             clean_branch_name,
