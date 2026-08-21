@@ -1144,9 +1144,13 @@ def summarize_automation_stage(item: Dict[str, Any]) -> str:
         return "Agent result needs fix"
     if agent_result_status in {"blocked", "invalid", "error"}:
         return "Agent result needs review"
-    if agent_result_status in {"", "waiting"} and int(item.get("agent_repair_count") or 0) > 0:
-        return "Repairing agent result"
     copilot_status = str(item.get("copilot_status") or "").strip().lower()
+    if (
+        agent_result_status in {"", "waiting"}
+        and int(item.get("agent_repair_count") or 0) > 0
+        and copilot_status not in {"launched", "prepared"}
+    ):
+        return "Repairing agent result"
     if copilot_status in {"blocked", "desktop_prepared"}:
         return "Agent automation blocked"
     if item.get("copilot_error"):
@@ -3535,6 +3539,7 @@ class AutomationService:
             try:
                 self._schedule_auto_completion(
                     portal_name=portal_name,
+                    work_item_id=work_item_id,
                     iteration_path=str(state.get("iteration_path") or ""),
                     triage_status=str(state.get("triage_status") or "pending"),
                     selected_base_branch=str(state.get("selected_base_branch") or ""),

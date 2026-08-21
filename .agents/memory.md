@@ -1,6 +1,6 @@
 # Project Memory - TFS Documentation Automation MVP
 
-Last updated: 2026-08-18
+Last updated: 2026-08-21
 
 ## Purpose
 
@@ -74,6 +74,8 @@ Useful existing capabilities from that project:
 Important: the Cherry Picks dashboard source is used as a reference. The integrated Cherry Pick propagation page in `tfs-doc-automation-mvp` is read-only and should not create branches, PRs, work item updates, or cherry-picks.
 
 ## Current Technical Direction
+
+- Persisted automatic flows resume after dashboard restarts using the original work item ID. A rerun clears any prior result-repair metadata so the dashboard status only describes the active rerun.
 
 Framework decision:
 
