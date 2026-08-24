@@ -296,6 +296,15 @@ write_env_values(
         "DOC_AUTOMATION_SERVER_HOST": "0.0.0.0",
         "DOC_AUTOMATION_SERVER_PORT": pipeline_port,
         "DOC_AUTOMATION_SERVER_AUTO_PORT": "false",
+        # Deliberately "false", and deliberately different from
+        # DEFAULT_RUNTIME_SETTINGS in doc_automation/config.py, which is True.
+        # This script also runs outside the CM devcontainer, where the CM root CA is
+        # not in the trust store, and defaulting to verification on would fail every
+        # TFS call with a certificate error in exactly the environments that have no
+        # convenient fix. The caller that can guarantee the CA decides instead:
+        # content-ai-ctl passes CONTENT_AI_TFS_VERIFY_SSL=true, because the image it
+        # starts trusts the CM root CA OS-wide and exports REQUESTS_CA_BUNDLE.
+        # Do not "fix" this to true — the safe-looking change breaks host use.
         "DOC_AUTOMATION_TFS_VERIFY_SSL": os.environ.get("CONTENT_AI_TFS_VERIFY_SSL", "false"),
         "DOC_AUTOMATION_TFS_CA_BUNDLE_PATH": os.environ.get("CONTENT_AI_TFS_CA_BUNDLE_PATH", ""),
         "DOC_AUTOMATION_EXECUTION_RUNTIME": "devcontainer",
