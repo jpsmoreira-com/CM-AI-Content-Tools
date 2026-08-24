@@ -44,7 +44,7 @@ Or:
 .\run_dashboard.ps1
 ```
 
-The default dashboard port is `7000` so it does not conflict with MkDocs, which commonly uses `8000`. If the preferred port is already in use or blocked, `run_server.py` reads `.env` and can automatically move to the next free port when automatic fallback is enabled.
+The default dashboard port is `7001` so it does not conflict with MkDocs (commonly `8000`) or the MES UI (commonly `7000`). If the preferred port is already in use or blocked, `run_server.py` reads `.env` and can automatically move to the next free port when automatic fallback is enabled.
 
 ## Implemented In This Slice
 

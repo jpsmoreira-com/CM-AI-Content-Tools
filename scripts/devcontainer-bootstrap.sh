@@ -9,7 +9,7 @@ CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturin
 CONTENT_AI_AUTO_STASH_ON_UPDATE="${CONTENT_AI_AUTO_STASH_ON_UPDATE:-true}"
 PIPELINE_PROJECT_PATH="$CONTENT_AI_REPO_PATH/projects/tfs-doc-automation-mvp"
 PIPELINE_VENV="${TFS_AUTONOMOUS_PIPELINE_VENV:-$HOME/.venvs/tfs-doc-automation-mvp}"
-PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7000}"
+PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7001}"
 CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-/workspaces/.content-ai-settings/tfs-doc-automation-mvp}"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
@@ -348,7 +348,7 @@ project_path = Path(os.environ["CONTENT_AI_PIPELINE_PROJECT_PATH"])
 settings_path = Path(os.environ["CONTENT_AI_SETTINGS_PATH"])
 target_workspace = os.environ["CONTENT_AI_TARGET_WORKSPACE"]
 target_repository = os.environ["CONTENT_AI_TARGET_REPOSITORY"]
-pipeline_port = os.environ.get("TFS_AUTONOMOUS_PIPELINE_PORT", "7000")
+pipeline_port = os.environ.get("TFS_AUTONOMOUS_PIPELINE_PORT", "7001")
 settings_path.mkdir(parents=True, exist_ok=True)
 
 env_path = project_path / ".env"
@@ -470,7 +470,7 @@ export PATH="\$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:\$PATH"
 cd "\$PIPELINE_PROJECT_PATH"
 case "\${1:-dashboard}" in
   dashboard)
-    exec "$PIPELINE_VENV/bin/python" -m uvicorn main:app --host "\${TFS_AUTONOMOUS_PIPELINE_HOST:-0.0.0.0}" --port "\${TFS_AUTONOMOUS_PIPELINE_PORT:-7000}"
+    exec "$PIPELINE_VENV/bin/python" -m uvicorn main:app --host "\${TFS_AUTONOMOUS_PIPELINE_HOST:-0.0.0.0}" --port "\${TFS_AUTONOMOUS_PIPELINE_PORT:-7001}"
     ;;
   worker)
     exec "$PIPELINE_VENV/bin/python" run_worker.py

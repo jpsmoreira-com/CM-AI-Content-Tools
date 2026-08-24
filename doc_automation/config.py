@@ -75,7 +75,7 @@ def mirror_persisted_file(local_path: Path, filename: str) -> None:
     shutil.copyfile(local_path, persisted_path)
 DEFAULT_RUNTIME_SETTINGS = {
     "server_host": "127.0.0.1",
-    "server_port": 7000,
+    "server_port": 7001,
     "auto_port": True,
     "tfs_request_timeout_seconds": 15,
     "tfs_verify_ssl": True,

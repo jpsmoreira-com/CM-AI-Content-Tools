@@ -74,7 +74,7 @@ Target repositories should use the image and call the post-create script:
     "CONTENT_AI_REPO_PATH": "/workspaces/CM-AI-Content-Skills",
     "CONTENT_AI_IMAGE_REPO_PATH": "/opt/content-ai/CM-AI-Content-Skills",
     "CONTENT_AI_SETTINGS_PATH": "/workspaces/.content-ai-settings/tfs-doc-automation-mvp",
-    "TFS_AUTONOMOUS_PIPELINE_PORT": "7000"
+    "TFS_AUTONOMOUS_PIPELINE_PORT": "7001"
   },
   "customizations": {
     "vscode": {
@@ -143,7 +143,7 @@ VS Code tasks and status bar buttons should call this wrapper instead of invokin
 | `CONTENT_AI_SETTINGS_PATH` | `/workspaces/.content-ai-settings/tfs-doc-automation-mvp` | Persistent local settings. |
 | `CONTENT_AI_BRANCH` | `main` | Content AI branch to refresh during DevContainer post-create setup when the runtime copy is a Git checkout. |
 | `TFS_AUTONOMOUS_PIPELINE_VENV` | `/opt/content-ai/venvs/tfs-doc-automation-mvp` when present | Pipeline virtual environment. |
-| `TFS_AUTONOMOUS_PIPELINE_PORT` | `7000` | Dashboard port. |
+| `TFS_AUTONOMOUS_PIPELINE_PORT` | `7001` | Dashboard port. |
 | `CONTENT_AI_TFS_HOST` | `tfs-product.cmf.criticalmanufacturing.com` | TFS host used for Git credential preflight. |
 | `CONTENT_AI_TFS_VERIFY_SSL` | `false` in generated devcontainer `.env` | TFS SSL verification default for internal containers. |
 | `CONTENT_AI_TFS_CA_BUNDLE_PATH` | empty | Optional corporate CA bundle path. |

@@ -35,7 +35,7 @@ else
   PIPELINE_VENV="${TFS_AUTONOMOUS_PIPELINE_VENV:-$HOME/.venvs/tfs-doc-automation-mvp}"
 fi
 PIPELINE_PYTHON="$PIPELINE_VENV/bin/python"
-PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7000}"
+PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7001}"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
 export CODEX_HOME
@@ -250,7 +250,7 @@ project_path = Path(os.environ["CONTENT_AI_PIPELINE_PROJECT_PATH"])
 settings_path = Path(os.environ["CONTENT_AI_SETTINGS_PATH"])
 target_workspace = os.environ["CONTENT_AI_TARGET_WORKSPACE"]
 target_repository = os.environ["CONTENT_AI_TARGET_REPOSITORY"]
-pipeline_port = os.environ.get("TFS_AUTONOMOUS_PIPELINE_PORT", "7000")
+pipeline_port = os.environ.get("TFS_AUTONOMOUS_PIPELINE_PORT", "7001")
 settings_path.mkdir(parents=True, exist_ok=True)
 
 env_path = project_path / ".env"
@@ -558,6 +558,10 @@ EOF
 }
 
 run_health_check() {
+  # doc_automation is imported from the project directory, not installed into the
+  # venv — run the check from there so it also works when the script is invoked
+  # from a target repository workspace.
+  cd "$PIPELINE_PROJECT_PATH"
   "$PIPELINE_PYTHON" - <<'PY'
 import importlib
 
