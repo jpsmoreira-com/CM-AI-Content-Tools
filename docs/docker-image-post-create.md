@@ -126,13 +126,12 @@ tfs-autonomous-pipeline dashboard
 tfs-autonomous-pipeline worker
 tfs-autonomous-pipeline stop
 tfs-autonomous-pipeline sync-assets
-tfs-autonomous-pipeline sync-project
 tfs-autonomous-pipeline doctor
 ```
 
 VS Code tasks and status bar buttons should call this wrapper instead of invoking Python files directly.
 
-`dashboard` and `worker` run a safe project sync before starting. If the runtime copy is a Git checkout, the wrapper fetches the configured branch, auto-stashes local runtime-copy changes when `CONTENT_AI_AUTO_STASH_ON_UPDATE=true`, and fast-forwards. If the runtime copy comes only from the prebuilt image and has no Git metadata, the wrapper continues with the image-provided version and prints a clear message that updating the tool requires rebuilding the image or rerunning post-create with a Git-backed runtime copy.
+`dashboard` and `worker` always start the currently installed runtime copy without changing it. They do not fetch, stash, switch branches, or pull updates. The runtime copy is refreshed only during DevContainer post-create setup; rebuild or reopen the DevContainer to apply a newer managed tool version.
 
 ## Environment Variables
 
@@ -142,7 +141,7 @@ VS Code tasks and status bar buttons should call this wrapper instead of invokin
 | `CONTENT_AI_IMAGE_REPO_PATH` | `/opt/content-ai/CM-AI-Content-Skills` | Image seed copy. |
 | `CONTENT_AI_REPO_PATH` | `/workspaces/CM-AI-Content-Skills` | Writable runtime copy. |
 | `CONTENT_AI_SETTINGS_PATH` | `/workspaces/.content-ai-settings/tfs-doc-automation-mvp` | Persistent local settings. |
-| `CONTENT_AI_BRANCH` | `main` | Content AI branch to sync when the runtime copy is a Git checkout. |
+| `CONTENT_AI_BRANCH` | `main` | Content AI branch to refresh during DevContainer post-create setup when the runtime copy is a Git checkout. |
 | `TFS_AUTONOMOUS_PIPELINE_VENV` | `/opt/content-ai/venvs/tfs-doc-automation-mvp` when present | Pipeline virtual environment. |
 | `TFS_AUTONOMOUS_PIPELINE_PORT` | `7000` | Dashboard port. |
 | `CONTENT_AI_TFS_HOST` | `tfs-product.cmf.criticalmanufacturing.com` | TFS host used for Git credential preflight. |
@@ -151,7 +150,7 @@ VS Code tasks and status bar buttons should call this wrapper instead of invokin
 | `CONTENT_AI_PREPULL_MARKDOWNLINT_IMAGE` | `true` | Pre-pull the markdownlint image using an isolated Docker config. |
 | `CONTENT_AI_MARKDOWNLINT_IMAGE` | `proxy.criticalmanufacturing.io/davidanson/markdownlint-cli2:v0.12.1` | Markdownlint image used by repository hooks. |
 | `CONTENT_AI_POST_CREATE_REPAIR_MISSING_VENV` | `false` | Allow the script to create a missing venv as a repair fallback. |
-| `CONTENT_AI_AUTO_STASH_ON_UPDATE` | `true` | Auto-stash local changes in the runtime Content AI copy before fast-forwarding it. |
+| `CONTENT_AI_AUTO_STASH_ON_UPDATE` | `true` | During DevContainer setup, auto-stash local changes in the runtime Content AI copy before fast-forwarding it. |
 
 ## Security Notes
 
@@ -170,6 +169,6 @@ The script should warn, not fail, when user-specific state is missing, for examp
 - TFS Git credentials are not configured yet.
 - Codex CLI is installed but not authenticated.
 - The markdownlint image cannot be pre-pulled.
-- The image-managed runtime copy is not a Git checkout and therefore cannot be auto-updated from Git.
+- The image-managed runtime copy is not a Git checkout and can be refreshed only from the image seed during DevContainer setup.
 
 Those items can be resolved later from the dashboard Settings page or by rerunning `content-ai-post-create`.

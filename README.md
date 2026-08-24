@@ -212,7 +212,7 @@ Temporary test mode:
 
 For the preferred prebuilt Docker image flow, use `content-ai-post-create` as the target repository `postCreateCommand`. The image contract, required packages, persistent paths, and post-create responsibilities are documented in [docs/docker-image-post-create.md](docs/docker-image-post-create.md).
 
-The generated `tfs-autonomous-pipeline dashboard` and `tfs-autonomous-pipeline worker` commands perform a safe Content AI project sync before starting. Local changes in the runtime copy are backed up and auto-stashed by default, so users should not need to run a separate sync task before the normal Run TFS Pipeline action. Use `tfs-autonomous-pipeline sync-project` only for manual diagnostics or when auto-stash is intentionally disabled.
+The generated `tfs-autonomous-pipeline dashboard` and `tfs-autonomous-pipeline worker` commands start the installed runtime copy without changing it. They never fetch, stash, switch branches, or pull updates. To update the installed tool, rebuild or reopen the DevContainer so its post-create setup refreshes the managed runtime copy.
 
 Target repositories can install the pipeline and managed Content AI assets from a devcontainer by calling:
 
@@ -232,20 +232,19 @@ For Git Credentials authentication inside a devcontainer, provide one of these o
 - `CONTENT_AI_TFS_VERIFY_SSL`, when the devcontainer should override the default internal setting for TFS SSL verification;
 - `CONTENT_AI_TFS_CA_BUNDLE_PATH`, when the devcontainer has a mounted corporate CA bundle that Python `requests` should trust.
 - `CONTENT_AI_SETTINGS_PATH`, when the devcontainer should persist `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror somewhere other than `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.
-- `CONTENT_AI_AUTO_STASH_ON_UPDATE=false`, when the centralized runtime copy should stop and ask for manual review instead of auto-stashing local tool changes before updating.
+- `CONTENT_AI_AUTO_STASH_ON_UPDATE=false`, when DevContainer setup should stop and ask for manual review instead of auto-stashing local tool changes before refreshing the centralized runtime copy.
 
 If those inputs are not configured, open `Settings > Connection` after the dashboard starts and use `TFS Git Credentials Setup`. That setup writes the provided username and token/password through `git credential approve` into the devcontainer user's Git credential store, mirrors the store to `CONTENT_AI_SETTINGS_PATH/git-credentials`, then validates both dashboard credential lookup and `git ls-remote --heads origin`. Host Windows/GCM credentials are not assumed to be available inside Linux containers.
 
 The bootstrap:
 
-- clones or updates the centralized `CM-AI-Content-Skills` checkout;
+- clones or updates the centralized `CM-AI-Content-Skills` checkout during DevContainer setup only;
 - restores `CONTENT_AI_SETTINGS_PATH/git-credentials` into the devcontainer user's `~/.git-credentials` when available, then validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
 - writes TFS SSL runtime defaults for the devcontainer. Internal devcontainers default to `DOC_AUTOMATION_TFS_VERIFY_SSL=false` unless `CONTENT_AI_TFS_VERIFY_SSL` is provided;
 - installs Codex CLI and GitHub Copilot CLI into the devcontainer user's npm prefix when `TFS_AUTONOMOUS_INSTALL_CODEX_CLI=true` and `TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI=true` respectively, and the executables are missing;
 - migrates the native GitHub Copilot CLI state from `~/.copilot` into `CONTENT_AI_SETTINGS_PATH/copilot-home` and links it back, so an approved device login survives devcontainer recreation;
 - installs the pipeline requirements into `~/.venvs/tfs-doc-automation-mvp`;
 - creates a `tfs-autonomous-pipeline` wrapper in `~/.local/bin`;
-- makes the wrapper sync the central Content AI runtime copy before starting the dashboard or worker;
 - creates local runtime files for the target devcontainer, including `.env` and `config/tfs_dashboard.local.json`;
 - restores those local runtime files from `CONTENT_AI_SETTINGS_PATH` when available, then mirrors dashboard saves back to that folder;
 - points the active portal workspace to the target repository workspace, normally `/app` when the devcontainer mounts the repository there;

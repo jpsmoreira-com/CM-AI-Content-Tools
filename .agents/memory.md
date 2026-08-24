@@ -900,12 +900,10 @@ Next recommended tasks:
 - The new post-create script uses the image copy as a seed, ensures a writable runtime copy under `/workspaces/CM-AI-Content-Skills`, restores persistent settings from `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`, syncs managed AI assets into the target repository, prepares a clean Docker config for hook-driven linting, and creates the `tfs-autonomous-pipeline` wrapper.
 - Added `docs/docker-image-post-create.md` to define the Docker image requirements, expected paths, target devcontainer configuration, post-create responsibilities, environment variables, security model, and failure policy.
 
-2026-07-08 Pipeline run auto-sync:
+2026-07-08 Pipeline run auto-sync (superseded on 2026-08-24):
 
-- A user hit a raw `git pull` failure because the runtime Content AI copy in `/workspaces/CM-AI-Content-Skills` had local changes while the remote branch was ahead.
-- Decided that the normal Run TFS Pipeline task must not require a hidden manual sync step. The generated `tfs-autonomous-pipeline dashboard` and `worker` commands now run a safe project sync first.
-- The sync fetches the configured `CONTENT_AI_BRANCH`, backs up local runtime-copy changes to `CONTENT_AI_SETTINGS_PATH/backups`, auto-stashes them when `CONTENT_AI_AUTO_STASH_ON_UPDATE=true`, and then fast-forwards.
-- If auto-stash is disabled or the image-managed runtime copy cannot be updated from Git, the wrapper prints a clear remediation message instead of exposing raw Git merge errors.
+- Runtime auto-sync was introduced after local changes blocked a pull of `/workspaces/CM-AI-Content-Skills`.
+- It was later removed because starting the dashboard or worker must be deterministic and must never alter the installed tool. Runtime refreshes now happen only in DevContainer post-create/bootstrap setup.
 
 2026-08-10 VS Code Copilot handoff diagnostics:
 
@@ -1005,3 +1003,8 @@ Next recommended tasks:
 
 - The project-owned DevContainer declares both VS Code Task Explorer and VS Code Task Buttons as required extensions.
 - The project version-controls the dashboard, worker, dependency, and stop tasks together with status-bar buttons for running and stopping the pipeline. This keeps the standalone project DevContainer usable without depending on target-repository VS Code configuration.
+
+2026-08-24 Stable runtime startup:
+
+- Starting the dashboard or worker must not modify the central Content AI runtime copy. Generated `tfs-autonomous-pipeline dashboard` and `worker` commands no longer fetch, stash, change branch, or pull.
+- No runtime update command is exposed. The managed central clone is refreshed only by DevContainer post-create/bootstrap setup, where local-change backup and auto-stash safeguards remain available.

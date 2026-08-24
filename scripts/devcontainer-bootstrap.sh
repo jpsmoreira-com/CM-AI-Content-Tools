@@ -259,7 +259,7 @@ stash_content_ai_changes_for_update() {
   if [ "$CONTENT_AI_AUTO_STASH_ON_UPDATE" != "true" ]; then
     git -C "$CONTENT_AI_REPO_PATH" status --short --untracked-files=all >&2 || true
     echo "Automatic update is paused to avoid overwriting local changes." >&2
-    echo "Run 'tfs-autonomous-pipeline sync-project' after reviewing the changes, or set CONTENT_AI_AUTO_STASH_ON_UPDATE=true to let the runtime copy auto-stash before updating." >&2
+    echo "Review the local runtime-copy changes, or set CONTENT_AI_AUTO_STASH_ON_UPDATE=true to let DevContainer setup auto-stash them before updating." >&2
     exit 1
   fi
 
@@ -468,38 +468,11 @@ export CODEX_HOME="\${CODEX_HOME:-$CODEX_HOME}"
 export NPM_CONFIG_PREFIX="\${NPM_CONFIG_PREFIX:-$NPM_CONFIG_PREFIX}"
 export PATH="\$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:\$PATH"
 cd "\$PIPELINE_PROJECT_PATH"
-sync_project() {
-  if [ ! -d "\$CONTENT_AI_REPO_PATH/.git" ]; then
-    echo "Content AI runtime copy is not a Git checkout at \$CONTENT_AI_REPO_PATH. Re-run the devcontainer post-create/bootstrap setup." >&2
-    return 1
-  fi
-  echo "Syncing Content AI runtime copy before starting the pipeline..."
-  git -C "\$CONTENT_AI_REPO_PATH" fetch origin "\$CONTENT_AI_BRANCH" --prune
-  if [ -n "\$(git -C "\$CONTENT_AI_REPO_PATH" status --porcelain --untracked-files=all)" ]; then
-    if [ "\${CONTENT_AI_AUTO_STASH_ON_UPDATE:-true}" != "true" ]; then
-      git -C "\$CONTENT_AI_REPO_PATH" status --short --untracked-files=all >&2 || true
-      echo "Content AI runtime copy has local changes. Run 'tfs-autonomous-pipeline sync-project' after reviewing them, or set CONTENT_AI_AUTO_STASH_ON_UPDATE=true." >&2
-      return 1
-    fi
-    backup_dir="\${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_SETTINGS_PATH}/backups"
-    timestamp="\$(date -u +"%Y%m%dT%H%M%SZ")"
-    mkdir -p "\$backup_dir"
-    git -C "\$CONTENT_AI_REPO_PATH" status --short --untracked-files=all > "\$backup_dir/content-ai-pre-wrapper-update-status-\$timestamp.txt" || true
-    git -C "\$CONTENT_AI_REPO_PATH" diff > "\$backup_dir/content-ai-pre-wrapper-update-worktree-\$timestamp.patch" || true
-    git -C "\$CONTENT_AI_REPO_PATH" diff --cached > "\$backup_dir/content-ai-pre-wrapper-update-index-\$timestamp.patch" || true
-    git -C "\$CONTENT_AI_REPO_PATH" stash push -u -m "content-ai auto-stash before wrapper update \$timestamp"
-    echo "Local Content AI runtime changes were stashed before starting the pipeline."
-  fi
-  git -C "\$CONTENT_AI_REPO_PATH" checkout "\$CONTENT_AI_BRANCH"
-  git -C "\$CONTENT_AI_REPO_PATH" pull --ff-only origin "\$CONTENT_AI_BRANCH"
-}
 case "\${1:-dashboard}" in
   dashboard)
-    sync_project
     exec "$PIPELINE_VENV/bin/python" -m uvicorn main:app --host "\${TFS_AUTONOMOUS_PIPELINE_HOST:-0.0.0.0}" --port "\${TFS_AUTONOMOUS_PIPELINE_PORT:-7000}"
     ;;
   worker)
-    sync_project
     exec "$PIPELINE_VENV/bin/python" run_worker.py
     ;;
   stop)
@@ -509,11 +482,8 @@ case "\${1:-dashboard}" in
   sync-assets)
     exec bash "\$PIPELINE_PROJECT_PATH/scripts/sync-content-ai-assets.sh" "\${2:-$TARGET_WORKSPACE}"
     ;;
-  sync-project)
-    sync_project
-    ;;
   *)
-    echo "Usage: tfs-autonomous-pipeline {dashboard|worker|stop|sync-assets|sync-project}" >&2
+    echo "Usage: tfs-autonomous-pipeline {dashboard|worker|stop|sync-assets}" >&2
     exit 2
     ;;
 esac

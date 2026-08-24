@@ -74,9 +74,57 @@ ensure_writable_directory() {
   fi
 }
 
+# Bring the runtime copy up to the commit this image ships.
+#
+# The runtime copy lives on the parent mount, outside the container, and survives
+# every rebuild. It used to be refreshed by pulling from GitHub before each start;
+# that made the branch, not the image, the thing that decided which version ran, and
+# it required network egress on every start. Now that the pull is gone, this is what
+# keeps the copy current — without it the copy is seeded once and never again, and the
+# tool stays pinned to whatever commit this machine first saw no matter how many
+# images ship afterwards.
+#
+# No stamp file is needed: the image seed and the copy made from it are both Git
+# checkouts, so their HEADs are directly comparable.
+refresh_project_copy() {
+  local image_sha runtime_sha
+
+  [ -d "$CONTENT_AI_IMAGE_REPO_PATH/.git" ] || return 0
+  image_sha="$(git -C "$CONTENT_AI_IMAGE_REPO_PATH" rev-parse HEAD 2>/dev/null || true)"
+  [ -n "$image_sha" ] || return 0
+
+  runtime_sha="$(git -C "$CONTENT_AI_REPO_PATH" rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$runtime_sha" ]; then
+    warn "Runtime copy at $CONTENT_AI_REPO_PATH is not a Git checkout, so it cannot be compared with the image. Remove it and re-run to take the image version ($image_sha)."
+    return 0
+  fi
+
+  [ "$image_sha" != "$runtime_sha" ] || return 0
+
+  log "Image ships $image_sha, runtime copy is at $runtime_sha - refreshing from the image"
+  # Fetched from the image seed rather than from GitHub: the image is the version
+  # authority, and this keeps container start working with no network at all.
+  # --update-shallow because both sides are depth-1 clones with no history in common,
+  # and reset --hard rather than pull --ff-only for the same reason - the seed commit
+  # is grafted and parentless, so a fast-forward can never apply.
+  # reset --hard replaces tracked files only. .env, config/*.local.json and data/ are
+  # gitignored, so the writer's settings and job history are left untouched.
+  if git -C "$CONTENT_AI_REPO_PATH" fetch -q --depth 1 --update-shallow \
+        "$CONTENT_AI_IMAGE_REPO_PATH" HEAD 2>/dev/null &&
+     git -C "$CONTENT_AI_REPO_PATH" reset -q --hard FETCH_HEAD 2>/dev/null; then
+    # Back onto a real branch: the runtime copy must not be left detached.
+    git -C "$CONTENT_AI_REPO_PATH" checkout -q -B "$CONTENT_AI_BRANCH" 2>/dev/null || true
+    log "Runtime copy refreshed to $image_sha"
+  else
+    # Deliberately not fatal: an out-of-date tool still works, a dead container does not.
+    warn "Could not refresh the runtime copy from the image seed. Continuing with $runtime_sha."
+  fi
+}
+
 ensure_project_copy() {
   if [ -f "$PIPELINE_PROJECT_PATH/requirements.txt" ]; then
     log "Using Content AI project at $CONTENT_AI_REPO_PATH"
+    refresh_project_copy
     return 0
   fi
 
@@ -414,8 +462,23 @@ ensure_github_copilot_cli() {
     warn "GitHub Copilot CLI was not found and npm is unavailable. The dashboard provider preflight will report this if GitHub Copilot CLI is selected."
     return 0
   fi
-  log "Installing GitHub Copilot CLI into $NPM_CONFIG_PREFIX"
-  npm install -g @github/copilot
+  # Tracks latest, and is overridable. The CLI moves fast and authenticates against a
+  # seat the user owns, so a stale version strands them more often than a moving one
+  # breaks them. Set CONTENT_AI_COPILOT_CLI_VERSION to a specific version to pin it —
+  # worth doing if you need a reproducible container, since "latest" means the CLI can
+  # change under a user with no commit to point at.
+  local copilot_spec="@github/copilot@${CONTENT_AI_COPILOT_CLI_VERSION:-latest}"
+  log "Installing GitHub Copilot CLI ($copilot_spec) into $NPM_CONFIG_PREFIX"
+  # Not fatal. This script runs under `set -euo pipefail` and the container command is
+  # `content-ai-post-create && ... dashboard`, so a bare failure here takes the whole
+  # dashboard down. The CLI is needed only by the copilot_cli provider; every other
+  # provider, vscode_bridge included, works without it. Losing an optional provider
+  # must not cost the writer the tool, and it must not make an offline start
+  # impossible.
+  if ! npm install -g "$copilot_spec"; then
+    warn "Could not install GitHub Copilot CLI ($copilot_spec). Continuing without it; the dashboard provider preflight will report this if GitHub Copilot CLI is selected."
+    return 0
+  fi
 }
 
 install_vscode_copilot_bridge() {
@@ -460,42 +523,11 @@ export CODEX_HOME="\${CODEX_HOME:-$CODEX_HOME}"
 export NPM_CONFIG_PREFIX="\${NPM_CONFIG_PREFIX:-$NPM_CONFIG_PREFIX}"
 export PATH="\$HOME/.local/bin:\$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:\$PATH"
 cd "$PIPELINE_PROJECT_PATH"
-sync_project() {
-  if [ ! -d "\$CONTENT_AI_REPO_PATH/.git" ]; then
-    echo "Content AI runtime copy is not a Git checkout at \$CONTENT_AI_REPO_PATH. Continuing with the image-provided version. Rebuild the image or rerun post-create from a Git-backed runtime copy to update the tool." >&2
-    return 0
-  fi
-  if ! git -C "\$CONTENT_AI_REPO_PATH" remote get-url origin >/dev/null 2>&1; then
-    echo "Content AI runtime copy has no origin remote. Continuing with the current local version." >&2
-    return 0
-  fi
-  echo "Syncing Content AI runtime copy before starting the pipeline..."
-  git -C "\$CONTENT_AI_REPO_PATH" fetch origin "\$CONTENT_AI_BRANCH" --prune
-  if [ -n "\$(git -C "\$CONTENT_AI_REPO_PATH" status --porcelain --untracked-files=all)" ]; then
-    if [ "\${CONTENT_AI_AUTO_STASH_ON_UPDATE:-true}" != "true" ]; then
-      git -C "\$CONTENT_AI_REPO_PATH" status --short --untracked-files=all >&2 || true
-      echo "Content AI runtime copy has local changes. Run 'tfs-autonomous-pipeline sync-project' after reviewing them, or set CONTENT_AI_AUTO_STASH_ON_UPDATE=true." >&2
-      return 1
-    fi
-    backup_dir="\${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_SETTINGS_PATH}/backups"
-    timestamp="\$(date -u +"%Y%m%dT%H%M%SZ")"
-    mkdir -p "\$backup_dir"
-    git -C "\$CONTENT_AI_REPO_PATH" status --short --untracked-files=all > "\$backup_dir/content-ai-pre-wrapper-update-status-\$timestamp.txt" || true
-    git -C "\$CONTENT_AI_REPO_PATH" diff > "\$backup_dir/content-ai-pre-wrapper-update-worktree-\$timestamp.patch" || true
-    git -C "\$CONTENT_AI_REPO_PATH" diff --cached > "\$backup_dir/content-ai-pre-wrapper-update-index-\$timestamp.patch" || true
-    git -C "\$CONTENT_AI_REPO_PATH" stash push -u -m "content-ai auto-stash before wrapper update \$timestamp"
-    echo "Local Content AI runtime changes were stashed before starting the pipeline."
-  fi
-  git -C "\$CONTENT_AI_REPO_PATH" checkout "\$CONTENT_AI_BRANCH"
-  git -C "\$CONTENT_AI_REPO_PATH" pull --ff-only origin "\$CONTENT_AI_BRANCH"
-}
 case "\${1:-dashboard}" in
   dashboard)
-    sync_project
     exec "$PIPELINE_PYTHON" -m uvicorn main:app --host "\${TFS_AUTONOMOUS_PIPELINE_HOST:-0.0.0.0}" --port "\${TFS_AUTONOMOUS_PIPELINE_PORT:-$PIPELINE_PORT}"
     ;;
   worker)
-    sync_project
     exec "$PIPELINE_PYTHON" run_worker.py
     ;;
   stop)
@@ -504,9 +536,6 @@ case "\${1:-dashboard}" in
     ;;
   sync-assets)
     exec bash "$PIPELINE_PROJECT_PATH/scripts/sync-content-ai-assets.sh" "\${2:-$TARGET_WORKSPACE}"
-    ;;
-  sync-project)
-    sync_project
     ;;
   doctor)
     echo "Project: $PIPELINE_PROJECT_PATH"
@@ -519,7 +548,7 @@ print("Provider:", load_runtime_settings().get("copilot_provider"))
 PY
     ;;
   *)
-    echo "Usage: tfs-autonomous-pipeline {dashboard|worker|stop|sync-assets|sync-project|doctor}" >&2
+    echo "Usage: tfs-autonomous-pipeline {dashboard|worker|stop|sync-assets|doctor}" >&2
     exit 2
     ;;
 esac
