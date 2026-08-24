@@ -30,6 +30,17 @@
         "panel": "dedicated",
         "clear": false
       }
+    },
+    {
+      "label": "TFS Automation: Stop Pipeline",
+      "type": "shell",
+      "command": "pkill -f 'uvicorn main:app|run_worker.py' || true",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": false
+      }
     }
   ],
   "inputs": [

@@ -1000,3 +1000,8 @@ Next recommended tasks:
 - Bind-mounted repositories can have a different owner from the DevContainer user, causing Git's `detected dubious ownership` protection to block credential and remote checks.
 - Both bootstrap paths now add the target workspace to the current user's `safe.directory` list before inspecting the repository.
 - Dashboard credential setup and preflight apply the same trust step. They now distinguish a missing Git workspace, a workspace without an `origin` remote, and a genuine remote-access failure instead of combining those diagnostics with credential errors.
+
+2026-08-24 Standalone pipeline task buttons:
+
+- The project-owned DevContainer declares both VS Code Task Explorer and VS Code Task Buttons as required extensions.
+- The project version-controls the dashboard, worker, dependency, and stop tasks together with status-bar buttons for running and stopping the pipeline. This keeps the standalone project DevContainer usable without depending on target-repository VS Code configuration.

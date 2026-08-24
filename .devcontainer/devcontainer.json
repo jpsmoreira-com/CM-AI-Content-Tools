@@ -16,7 +16,9 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-python.python"
+        "ms-python.python",
+        "spmeesseman.vscode-taskexplorer",
+        "spencerwmiles.vscode-task-buttons"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python",
