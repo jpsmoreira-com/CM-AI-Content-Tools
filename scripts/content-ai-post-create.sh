@@ -137,6 +137,16 @@ set_git_store_helper() {
   git config --global credential.useHttpPath true
 }
 
+trust_target_workspace() {
+  if ! command -v git >/dev/null 2>&1 || [ ! -d "$TARGET_WORKSPACE" ]; then
+    return 0
+  fi
+  local resolved_workspace
+  resolved_workspace="$(cd "$TARGET_WORKSPACE" && pwd -P)"
+  git config --global --add safe.directory "$resolved_workspace" >/dev/null 2>&1 || true
+  log "Trusted target workspace for Git: $resolved_workspace"
+}
+
 restore_persisted_git_credentials() {
   local persisted_credentials_path="$CONTENT_AI_SETTINGS_PATH/git-credentials"
   if [ ! -f "$persisted_credentials_path" ]; then
@@ -534,6 +544,7 @@ log "Persistent settings: $CONTENT_AI_SETTINGS_PATH"
 
 ensure_project_copy
 ensure_pipeline_python
+trust_target_workspace
 target_repository="$(infer_target_repository)"
 log "Target repository: $target_repository"
 

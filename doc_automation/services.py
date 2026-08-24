@@ -377,6 +377,73 @@ def _set_git_credential_store_helper() -> None:
         return
 
 
+def _ensure_git_safe_directory(workspace_path: str) -> Dict[str, Any]:
+    """Trust a mounted repository before invoking Git inside a devcontainer."""
+    clean_path = str(workspace_path or "").strip()
+    if not clean_path:
+        return {
+            "status": "skipped",
+            "ok": True,
+            "message": "No workspace path is configured.",
+        }
+
+    workspace = Path(os.path.expanduser(clean_path))
+    if not workspace.exists():
+        return {
+            "status": "error",
+            "ok": False,
+            "message": f"The configured workspace does not exist inside the current runtime: {clean_path}",
+        }
+
+    git = shutil.which("git")
+    if not git:
+        return {
+            "status": "error",
+            "ok": False,
+            "message": "Git executable was not found.",
+        }
+
+    try:
+        resolved_path = str(workspace.resolve())
+        existing = subprocess.run(
+            [git, "config", "--global", "--get-all", "safe.directory"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        safe_directories = {line.strip() for line in existing.stdout.splitlines() if line.strip()}
+        if resolved_path not in safe_directories and "*" not in safe_directories:
+            add_result = subprocess.run(
+                [git, "config", "--global", "--add", "safe.directory", resolved_path],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if add_result.returncode != 0:
+                detail = add_result.stderr.strip() or add_result.stdout.strip()
+                return {
+                    "status": "error",
+                    "ok": False,
+                    "message": detail or f"Could not mark '{resolved_path}' as a safe Git directory.",
+                }
+        return {
+            "status": "ok",
+            "ok": True,
+            "message": f"Git workspace is trusted: {resolved_path}",
+            "workspace_path": resolved_path,
+        }
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "error",
+            "ok": False,
+            "message": f"Could not configure Git workspace trust for '{clean_path}': {exc}",
+        }
+
+
 def _write_git_store_credential(base_url: str, *, username: str, password: str) -> Dict[str, Any]:
     parsed = urlparse(normalize_base_url(base_url))
     scheme = parsed.scheme or "https"
@@ -449,6 +516,8 @@ def _approve_git_credential(url: str, *, username: str, password: str) -> None:
 def _git_remote_url(workspace_path: str) -> str:
     if not workspace_path.strip():
         return ""
+    if not bool(_ensure_git_safe_directory(workspace_path).get("ok")):
+        return ""
     result = subprocess.run(
         ["git", "-C", workspace_path.strip(), "remote", "get-url", "origin"],
         capture_output=True,
@@ -472,6 +541,50 @@ def _validate_git_remote_access(workspace_path: str) -> Dict[str, Any]:
     git = shutil.which("git")
     if not git:
         raise ServiceError("Git executable was not found. Install Git or use PAT authentication.")
+    workspace_safety = _ensure_git_safe_directory(workspace_path)
+    if not bool(workspace_safety.get("ok")):
+        return {
+            "status": "error",
+            "ok": False,
+            "message": str(workspace_safety.get("message") or "Could not trust the configured Git workspace."),
+        }
+
+    workspace_check = subprocess.run(
+        [git, "-C", workspace_path.strip(), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    if workspace_check.returncode != 0 or workspace_check.stdout.strip().lower() != "true":
+        return {
+            "status": "error",
+            "ok": False,
+            "message": (
+                f"The configured workspace '{workspace_path}' is not a Git repository inside the current runtime. "
+                "Open the intended repository in the devcontainer or select its workspace path in Settings."
+            ),
+        }
+
+    origin_check = subprocess.run(
+        [git, "-C", workspace_path.strip(), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    if origin_check.returncode != 0 or not origin_check.stdout.strip():
+        return {
+            "status": "error",
+            "ok": False,
+            "message": (
+                f"The configured Git workspace '{workspace_path}' has no 'origin' remote. "
+                "Clone the target repository or select the correct workspace in Settings."
+            ),
+        }
+
     result = subprocess.run(
         [git, "-C", workspace_path.strip(), "ls-remote", "--heads", "origin"],
         capture_output=True,
@@ -574,6 +687,14 @@ def _check_git_credentials_for_portal(portal: Dict[str, Any]) -> Dict[str, Any]:
 
     workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
     if workspace_path:
+        workspace_safety = _ensure_git_safe_directory(workspace_path)
+        if not bool(workspace_safety.get("ok")):
+            return {
+                "status": "error",
+                "ok": False,
+                "message": str(workspace_safety.get("message") or "Could not trust the configured Git workspace."),
+                "host": host,
+            }
         try:
             result = subprocess.run(
                 ["git", "-C", workspace_path, "rev-parse", "--is-inside-work-tree"],

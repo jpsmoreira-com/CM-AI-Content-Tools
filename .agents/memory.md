@@ -994,3 +994,9 @@ Next recommended tasks:
 - This is essential after an agent result needs repair: the repair prompt, instruction acknowledgement, Git preflight, and change validation must run in the work item's own worktree, never in `/app`.
 - A two-item concurrent rerun (WI 157946 and WI 157980) exposed the previous precedence bug. Both isolated worktrees and their agent results were correct, but state reconstruction replaced their paths with `/app`, causing a false branch-mismatch error and preventing the automatic repair from starting.
 - The bootstrap-managed `.agents/content-ai` tree is excluded from mandatory instruction acknowledgement. It remains available to agents, while the target repository `AGENTS.md` and its own `.agents` skills remain captured and must be acknowledged. This avoids blocking a valid result because of copied changelogs, readmes, and duplicate helper instructions.
+
+2026-08-24 Devcontainer Git workspace trust:
+
+- Bind-mounted repositories can have a different owner from the DevContainer user, causing Git's `detected dubious ownership` protection to block credential and remote checks.
+- Both bootstrap paths now add the target workspace to the current user's `safe.directory` list before inspecting the repository.
+- Dashboard credential setup and preflight apply the same trust step. They now distinguish a missing Git workspace, a workspace without an `origin` remote, and a genuine remote-access failure instead of combining those diagnostics with credential errors.

@@ -41,6 +41,16 @@ set_git_store_helper() {
   git config --global credential.useHttpPath true
 }
 
+trust_target_workspace() {
+  if ! command -v git >/dev/null 2>&1 || [ ! -d "$TARGET_WORKSPACE" ]; then
+    return 0
+  fi
+  local resolved_workspace
+  resolved_workspace="$(cd "$TARGET_WORKSPACE" && pwd -P)"
+  git config --global --add safe.directory "$resolved_workspace" >/dev/null 2>&1 || true
+  echo "Trusted target workspace for Git: $resolved_workspace"
+}
+
 restore_persisted_git_credentials() {
   persisted_credentials_path="$CONTENT_AI_SETTINGS_PATH/git-credentials"
   if [ ! -f "$persisted_credentials_path" ]; then
@@ -289,6 +299,7 @@ ensure_codex_cli
 ensure_github_copilot_cli
 
 sync_content_ai_project
+trust_target_workspace
 
 if [ ! -f "$PIPELINE_PROJECT_PATH/requirements.txt" ]; then
   echo "TFS Autonomous Pipeline project was not found at $PIPELINE_PROJECT_PATH." >&2
