@@ -29,12 +29,8 @@ The Docker image should include:
 
 - Bash, Git, curl, ca-certificates, coreutils, findutils, and unzip.
 - Python 3.11 or newer.
-- Node.js and npm.
-- Docker CLI. The Docker daemon can be supplied by the devcontainer environment.
-- The Content AI repository copied to `/opt/content-ai/CM-AI-Content-Skills`.
-- A prebuilt virtual environment at `/opt/content-ai/venvs/tfs-doc-automation-mvp`.
+- Node.js and npm/npx available for executing node CLI clients on-demand when selected.
 - Python dependencies installed from `projects/tfs-doc-automation-mvp/requirements.txt`.
-- Codex CLI installed on `PATH` when Codex CLI is an allowed provider.
 - `content-ai-post-create` installed on `PATH`, pointing to `projects/tfs-doc-automation-mvp/scripts/content-ai-post-create.sh`.
 - Recommended VS Code extensions declared in `devcontainer.json`, not installed from the post-create script.
 

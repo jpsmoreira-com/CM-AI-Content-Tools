@@ -520,10 +520,12 @@ def _github_copilot_cli_command(*, prompt_path: str, model_name: str, agent_name
         [
             'export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"',
             'export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"',
-            'copilot_bin="$(command -v copilot || true)"',
+            'copilot_bin=""',
+            'if command -v npx >/dev/null 2>&1; then copilot_bin="npx --yes @github/copilot@latest"; fi',
+            'if [ -z "$copilot_bin" ] && command -v copilot >/dev/null 2>&1; then copilot_bin="$(command -v copilot)"; fi',
             'if [ -z "$copilot_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then copilot_bin="$NPM_CONFIG_PREFIX/bin/copilot"; fi',
-            'if [ -z "$copilot_bin" ]; then echo "GitHub Copilot CLI executable was not found on PATH." >&2; exit 20; fi',
-            '"$copilot_bin" -p "$(cat ' + _shell_quote(prompt_path) + ')" -s --stream=off --mode=autopilot --max-autopilot-continues=10 --no-ask-user '
+            'if [ -z "$copilot_bin" ]; then echo "GitHub Copilot CLI executable was not found on PATH and npx is unavailable." >&2; exit 20; fi',
+            '$copilot_bin -p "$(cat ' + _shell_quote(prompt_path) + ')" -s --stream=off --mode=autopilot --max-autopilot-continues=10 --no-ask-user '
             '--allow-tool="read,write,shell" '
             '--deny-tool="shell(git commit),shell(git push),shell(git reset),shell(git clean),shell(rm:*)"',
         ]
@@ -933,16 +935,20 @@ printf '%s\n' "$bridge_manifest"
 set -eu
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
 export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"
-copilot_bin="$(command -v copilot || true)"
-if [ -z "$copilot_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then
+copilot_bin=""
+if command -v npx >/dev/null 2>&1; then
+  copilot_bin="npx --yes @github/copilot@latest"
+elif command -v copilot >/dev/null 2>&1; then
+  copilot_bin="$(command -v copilot)"
+elif [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then
   copilot_bin="$NPM_CONFIG_PREFIX/bin/copilot"
 fi
 if [ -z "$copilot_bin" ]; then
-  printf '%s\n' 'GitHub Copilot CLI executable was not found on PATH or at $NPM_CONFIG_PREFIX/bin/copilot.'
+  printf '%s\n' 'GitHub Copilot CLI executable was not found on PATH and npx is unavailable.'
   exit 20
 fi
-"$copilot_bin" --version
-"$copilot_bin" -p 'Reply with READY only.' -s --no-ask-user''' + model_option + "\n"
+$copilot_bin --version
+$copilot_bin -p 'Reply with READY only.' -s --no-ask-user''' + model_option + "\n"
         result = _run_wsl_script(distro, script, timeout_seconds=90)
         output = "\n".join([result.stdout or "", result.stderr or ""]).strip()
         authentication_missing = "no authentication information found" in output.lower()
@@ -979,18 +985,21 @@ set -eu
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
 export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$HOME/.npm-global/bin:$PATH"
-codex_bin="$(command -v codex || true)"
-if [ -z "$codex_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/codex" ]; then
+codex_bin=""
+if command -v npx >/dev/null 2>&1; then
+  codex_bin="npx --yes @openai/codex@latest"
+elif command -v codex >/dev/null 2>&1; then
+  codex_bin="$(command -v codex)"
+elif [ -x "$NPM_CONFIG_PREFIX/bin/codex" ]; then
   codex_bin="$NPM_CONFIG_PREFIX/bin/codex"
-fi
-if [ -z "$codex_bin" ] && [ -x "$HOME/.npm-global/bin/codex" ]; then
+elif [ -x "$HOME/.npm-global/bin/codex" ]; then
   codex_bin="$HOME/.npm-global/bin/codex"
 fi
 if [ -z "$codex_bin" ]; then
-  printf '{"overallStatus":"fail","checks":{"installation":{"status":"fail","summary":"Codex CLI executable was not found on PATH or at $NPM_CONFIG_PREFIX/bin/codex"}}}\n'
+  printf '{"overallStatus":"fail","checks":{"installation":{"status":"fail","summary":"Codex CLI executable was not found on PATH and npx is unavailable"}}}\n'
   exit 20
 fi
-"$codex_bin" doctor --json
+$codex_bin doctor --json
 '''
     result = _run_wsl_script(distro, script, timeout_seconds=60)
     try:
@@ -1054,20 +1063,23 @@ set -eu
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
 export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$HOME/.npm-global/bin:$PATH"
-codex_bin="$(command -v codex || true)"
-if [ -z "$codex_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/codex" ]; then
+codex_bin=""
+if command -v npx >/dev/null 2>&1; then
+  codex_bin="npx --yes @openai/codex@latest"
+elif command -v codex >/dev/null 2>&1; then
+  codex_bin="$(command -v codex)"
+elif [ -x "$NPM_CONFIG_PREFIX/bin/codex" ]; then
   codex_bin="$NPM_CONFIG_PREFIX/bin/codex"
-fi
-if [ -z "$codex_bin" ] && [ -x "$HOME/.npm-global/bin/codex" ]; then
+elif [ -x "$HOME/.npm-global/bin/codex" ]; then
   codex_bin="$HOME/.npm-global/bin/codex"
 fi
 if [ -z "$codex_bin" ]; then
-  echo "__DOC_AUTOMATION_ERROR__=Codex CLI executable was not found on PATH or at $NPM_CONFIG_PREFIX/bin/codex."
+  echo "__DOC_AUTOMATION_ERROR__=Codex CLI executable was not found on PATH and npx is unavailable."
   exit 20
 fi
 mkdir -p "$CODEX_HOME/login"
 log_path="$CODEX_HOME/login/device-login-$(date +%Y%m%d-%H%M%S).log"
-nohup "$codex_bin" login --device-auth > "$log_path" 2>&1 &
+nohup $codex_bin login --device-auth > "$log_path" 2>&1 &
 pid="$!"
 i=0
 while [ "$i" -lt 30 ]; do
@@ -1149,12 +1161,16 @@ def start_github_copilot_device_login(*, distro: str, host: str = "") -> Dict[st
 set -eu
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
 export PATH="$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"
-copilot_bin="$(command -v copilot || true)"
-if [ -z "$copilot_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then
+copilot_bin=""
+if command -v npx >/dev/null 2>&1; then
+  copilot_bin="npx --yes @github/copilot@latest"
+elif command -v copilot >/dev/null 2>&1; then
+  copilot_bin="$(command -v copilot)"
+elif [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then
   copilot_bin="$NPM_CONFIG_PREFIX/bin/copilot"
 fi
 if [ -z "$copilot_bin" ]; then
-  echo "__DOC_AUTOMATION_ERROR__=GitHub Copilot CLI executable was not found on PATH or at $NPM_CONFIG_PREFIX/bin/copilot."
+  echo "__DOC_AUTOMATION_ERROR__=GitHub Copilot CLI executable was not found on PATH and npx is unavailable."
   exit 20
 fi
 login_directory="${CONTENT_AI_SETTINGS_PATH:-$HOME/.copilot}/copilot-cli/login"

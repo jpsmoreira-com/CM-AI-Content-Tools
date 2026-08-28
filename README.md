@@ -138,7 +138,7 @@ For other CLI providers such as Codex, Claude, or a custom command:
 - use placeholders such as `{{prompt_path}}`, `{{workspace_path}}`, `{{workspace_unc_path}}`, `{{branch_name}}`, `{{model_name}}`, and `{{agent_result_path}}`;
 - the command is launched through the configured execution runtime and must write the expected `agent-result.json`.
 - for WSL repositories, prefer a native WSL CLI executable and `{{workspace_path}}`; using a Windows CLI against `{{workspace_unc_path}}` can fail when the agent process resolves the working directory.
-- for Codex CLI test runs in a devcontainer, the CLI must exist inside the container runtime. The bootstrap uses `CODEX_HOME` (normally `/home/vscode/.codex`) and `NPM_CONFIG_PREFIX` (normally `/home/vscode/.npm-global`) so the container can reuse mounted Codex auth state while keeping the executable available on the container `PATH`.
+- for Codex CLI test runs in a devcontainer, Node CLI clients are executed on-demand via `npx` when run by the user. The bootstrap uses `CODEX_HOME` (normally `/home/vscode/.codex`) and `NPM_CONFIG_PREFIX` (normally `/home/vscode/.npm-global`) so the container can reuse mounted Codex auth state.
 
 The automatic continuation contract is:
 

@@ -185,16 +185,11 @@ ensure_codex_cli() {
   fi
   mkdir -p "$NPM_CONFIG_PREFIX/bin" "$CODEX_HOME"
   ensure_node_runtime
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "npm was not found; skipping Codex CLI install. The dashboard will report a provider preflight warning if Codex CLI is selected." >&2
+  if ! command -v npm >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then
+    echo "npm/npx was not found; skipping Codex CLI preparation. The dashboard will report a provider preflight warning if Codex CLI is selected." >&2
     return 0
   fi
-  if command -v codex >/dev/null 2>&1 || [ -x "$NPM_CONFIG_PREFIX/bin/codex" ]; then
-    echo "Codex CLI is already available."
-    return 0
-  fi
-  echo "Installing Codex CLI into $NPM_CONFIG_PREFIX..."
-  npm install -g @openai/codex
+  echo "Codex CLI will be executed on-demand via npx (@openai/codex@latest) when selected."
 }
 
 ensure_github_copilot_cli() {
@@ -203,16 +198,11 @@ ensure_github_copilot_cli() {
   fi
   mkdir -p "$NPM_CONFIG_PREFIX/bin"
   ensure_node_runtime
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "npm was not found; skipping GitHub Copilot CLI install. The dashboard will report a provider preflight warning if GitHub Copilot CLI is selected." >&2
+  if ! command -v npm >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then
+    echo "npm/npx was not found; skipping GitHub Copilot CLI preparation. The dashboard will report a provider preflight warning if GitHub Copilot CLI is selected." >&2
     return 0
   fi
-  if command -v copilot >/dev/null 2>&1 || [ -x "$NPM_CONFIG_PREFIX/bin/copilot" ]; then
-    echo "GitHub Copilot CLI is already available."
-    return 0
-  fi
-  echo "Installing GitHub Copilot CLI into $NPM_CONFIG_PREFIX..."
-  npm install -g @github/copilot
+  echo "GitHub Copilot CLI will be executed on-demand via npx (@github/copilot@latest) when selected."
 }
 
 ensure_persisted_github_copilot_home() {
