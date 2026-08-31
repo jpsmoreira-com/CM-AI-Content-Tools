@@ -1,0 +1,40 @@
+{
+  "VsCodeTaskButtons.showCounter": false,
+  "VsCodeTaskButtons.tasks": [
+    {
+      "label": "$(play) Run TFS Pipeline",
+      "task": "TFS Automation: Run Dashboard",
+      "alignment": "left",
+      "tooltip": "Start the TFS Autonomous Pipeline dashboard on port 7000"
+    },
+    {
+      "label": "$(stop-circle) Stop Pipeline",
+      "task": "TFS Automation: Stop Pipeline",
+      "alignment": "left",
+      "tooltip": "Stop the TFS Autonomous Pipeline dashboard and background worker",
+      "color": "error"
+    },
+    {
+      "label": "$(list-unordered) Pipeline Actions",
+      "alignment": "left",
+      "tooltip": "Open the TFS Autonomous Pipeline task menu",
+      "tasks": [
+        {
+          "label": "Run Dashboard",
+          "task": "TFS Automation: Run Dashboard",
+          "description": "Start the dashboard on port 7000"
+        },
+        {
+          "label": "Run Background Worker",
+          "task": "TFS Automation: Run Background Worker",
+          "description": "Start the durable background worker"
+        },
+        {
+          "label": "Install Dependencies",
+          "task": "TFS Automation: Install Dependencies",
+          "description": "Install Python dependencies for local development"
+        }
+      ]
+    }
+  ]
+}

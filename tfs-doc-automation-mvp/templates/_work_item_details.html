@@ -1,0 +1,676 @@
+<div
+    class="detail-state"
+    data-stage-label="{{ item.stage_label }}"
+    data-branch-status="{{ item.branch_status or '-' }}"
+    data-copilot-status="{{ item.copilot_status or '-' }}"
+    data-push-status="{{ item.push_status or '-' }}"
+    data-pr-status="{{ item.pr_status or '-' }}"
+    data-progress-states="{% for step in item.progress_steps %}{{ step.state }}{% if not loop.last %},{% endif %}{% endfor %}"
+></div>
+
+<div class="detail-shell">
+    <section class="detail-panel detail-overview">
+        <div class="detail-overview-main">
+            <div>
+                <p class="detail-kicker">Automation Stage</p>
+                <h3>{{ item.stage_label }}</h3>
+            </div>
+            <div class="detail-signal-grid">
+                <div>
+                    <span>Branch</span>
+                    <strong>{{ item.branch_status or "-" }}</strong>
+                </div>
+                <div>
+                    <span>Agent</span>
+                    <strong>{{ item.copilot_status or "-" }}</strong>
+                </div>
+                <div>
+                    <span>Push</span>
+                    <strong>{{ item.push_status or "-" }}</strong>
+                </div>
+                <div>
+                    <span>PR</span>
+                    <strong>{{ item.pr_status or "-" }}</strong>
+                </div>
+            </div>
+        </div>
+
+        <div class="detail-progress-strip" aria-label="Automation progress">
+            {% for step in item.progress_steps %}
+            <span class="progress-mini-step is-{{ step.state }}" title="{{ step.label }}"></span>
+            {% endfor %}
+        </div>
+
+        <div class="detail-action-bar">
+            {% if item.can_create_branch %}
+            <form method="post" action="/work-items/{{ item.id }}/branch" class="inline-action-form">
+                <input type="hidden" name="portal" value="{{ selected_portal }}">
+                <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                <input type="hidden" name="triage_status" value="{{ item.triage_status }}">
+                <input type="hidden" name="selected_base_branch" value="{{ item.selected_base_branch }}">
+                <input type="hidden" name="work_type" value="{{ item.selected_work_type }}">
+                <input type="hidden" name="planned_branch_name" value="{{ item.branch_name }}">
+                <button type="submit">Create Work Branch</button>
+            </form>
+            {% endif %}
+
+            {% if item.can_launch_copilot %}
+            <form method="post" action="/work-items/{{ item.id }}/copilot" class="inline-action-form">
+                <input type="hidden" name="portal" value="{{ selected_portal }}">
+                <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                <input type="hidden" name="triage_status" value="{{ item.triage_status }}">
+                <input type="hidden" name="selected_base_branch" value="{{ item.selected_base_branch }}">
+                <input type="hidden" name="work_type" value="{{ item.selected_work_type }}">
+                <input type="hidden" name="planned_branch_name" value="{{ item.branch_name }}">
+                <button type="submit">{% if item.copilot_status in ["desktop_prepared", "prepared", "launched"] %}Rerun Agent{% else %}Run Agent{% endif %}</button>
+            </form>
+            {% endif %}
+
+            {% if item.can_check_agent_result %}
+            <form method="post" action="/work-items/{{ item.id }}/agent-result" class="inline-action-form">
+                <input type="hidden" name="portal" value="{{ selected_portal }}">
+                <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                <button type="submit">Check Agent Result</button>
+            </form>
+            {% endif %}
+
+            {% if item.can_commit_push %}
+            <form method="post" action="/work-items/{{ item.id }}/commit-push" class="inline-action-form">
+                <input type="hidden" name="portal" value="{{ selected_portal }}">
+                <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                <button type="submit">Commit &amp; Push</button>
+            </form>
+            {% endif %}
+
+            {% if item.can_create_draft_pr %}
+            <form method="post" action="/work-items/{{ item.id }}/draft-pr" class="inline-action-form">
+                <input type="hidden" name="portal" value="{{ selected_portal }}">
+                <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                <input type="hidden" name="triage_status" value="{{ item.triage_status }}">
+                <input type="hidden" name="selected_base_branch" value="{{ item.selected_base_branch }}">
+                <input type="hidden" name="work_type" value="{{ item.selected_work_type }}">
+                <input type="hidden" name="planned_branch_name" value="{{ item.branch_name }}">
+                <button type="submit">Create Draft PR</button>
+            </form>
+            {% elif item.has_pr and item.pr_url %}
+            <a class="button-link" href="{{ item.pr_url }}" target="_blank">{{ item.pr_link_label }}</a>
+            {% endif %}
+
+            {% if item.can_start_rerun %}
+            <form method="post" action="/work-items/{{ item.id }}/rerun" class="inline-action-form">
+                <input type="hidden" name="portal" value="{{ selected_portal }}">
+                <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                <input type="hidden" name="selected_base_branch" value="{{ item.selected_base_branch }}">
+                <input type="hidden" name="work_type" value="{{ item.selected_work_type }}">
+                <button type="submit" class="secondary-action">Rerun on New Branch</button>
+            </form>
+            {% endif %}
+        </div>
+
+        <dl class="detail-metadata-row">
+            <div>
+                <dt>Effective Branch</dt>
+                <dd><code>{{ item.effective_branch_name or item.branch_name or "-" }}</code></dd>
+            </div>
+            <div>
+                <dt>Reviewer</dt>
+                <dd>{{ item.reviewer_display_name or "-" }}</dd>
+            </div>
+            <div>
+                <dt>Parent</dt>
+                <dd>{% if item.parent_id %}{{ item.parent_type or "Work item" }} {{ item.parent_id }}{% else %}-{% endif %}</dd>
+            </div>
+        </dl>
+    </section>
+
+    <div class="detail-accordion-grid">
+        <div class="detail-accordion-column">
+        <details class="detail-disclosure" open>
+            <summary>
+                <span>Automation</span>
+                <small>{{ item.stage_label }}</small>
+            </summary>
+            <div class="detail-disclosure-body">
+                <div class="detail-two-column">
+                    <section>
+                        <h4>Progress</h4>
+                        <div class="progress-steps">
+                            {% for step in item.progress_steps %}
+                            <div class="progress-step is-{{ step.state }}">
+                                <span class="progress-dot"></span>
+                                <span>{{ step.label }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </section>
+                    <section>
+                        <h4>Current Status</h4>
+                        <dl class="detail-status-list">
+                            <div>
+                                <dt>Branch</dt>
+                                <dd>{{ item.branch_status or "-" }}</dd>
+                            </div>
+                            <div>
+                                <dt>Agent</dt>
+                                <dd>{{ item.copilot_status or "-" }}</dd>
+                            </div>
+                            <div>
+                                <dt>Result</dt>
+                                <dd>{{ item.agent_result_status or "-" }}</dd>
+                            </div>
+                            <div>
+                                <dt>Push</dt>
+                                <dd>{{ item.push_status or "-" }}</dd>
+                            </div>
+                            <div>
+                                <dt>PR</dt>
+                                <dd>{{ item.pr_status or "-" }}</dd>
+                            </div>
+                            {% if item.push_commit %}
+                            <div>
+                                <dt>Commit</dt>
+                                <dd><code>{{ item.push_commit }}</code></dd>
+                            </div>
+                            {% endif %}
+                        </dl>
+                    </section>
+                </div>
+
+                {% if item.branch_error or item.copilot_error or item.agent_result_error or item.push_error or item.pr_error %}
+                <section>
+                    <h4>Automation Outcome</h4>
+                    <div class="stack compact">
+                        {% if item.branch_error %}<span class="status-error">{{ item.branch_error }}</span>{% endif %}
+                        {% if item.copilot_error %}<span class="status-error">{{ item.copilot_error }}</span>{% endif %}
+                        {% if item.agent_result_guidance %}
+                        <article class="automation-guidance is-{{ item.agent_result_guidance.level }}">
+                            <p class="automation-guidance-label">Pipeline decision</p>
+                            <h5>{{ item.agent_result_guidance.title }}</h5>
+                            <p>{{ item.agent_result_guidance.summary }}</p>
+                            {% if item.agent_result_guidance.blockers %}
+                            <div>
+                                <strong>What blocked progression</strong>
+                                <ul>
+                                    {% for blocker in item.agent_result_guidance.blockers %}
+                                    <li>{{ blocker }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if item.agent_result_guidance.next_steps %}
+                            <div>
+                                <strong>Recommended next steps</strong>
+                                <ol>
+                                    {% for step in item.agent_result_guidance.next_steps %}
+                                    <li>{{ step }}</li>
+                                    {% endfor %}
+                                </ol>
+                            </div>
+                            {% endif %}
+                            {% if item.agent_result_guidance.technical_details %}
+                            <details class="technical-details">
+                                <summary>Technical details</summary>
+                                <pre>{{ item.agent_result_guidance.technical_details }}</pre>
+                            </details>
+                            {% endif %}
+                        </article>
+                        {% elif item.agent_result_error %}
+                        <span class="status-error">{{ item.agent_result_error }}</span>
+                        {% endif %}
+                        {% if item.push_error %}<span class="status-error">{{ item.push_error }}</span>{% endif %}
+                        {% if item.pr_error %}<span class="status-error">{{ item.pr_error }}</span>{% endif %}
+                    </div>
+                </section>
+                {% endif %}
+
+                {% if item.automation_events %}
+                <section>
+                    <h4>History</h4>
+                    <div class="audit-timeline">
+                        {% for event in item.automation_events %}
+                        <article class="audit-event is-{{ event.level }}">
+                            <div class="audit-event-marker"></div>
+                            <div class="audit-event-body">
+                                <div class="audit-event-header">
+                                    <strong>{{ event.stage }}</strong>
+                                    <span class="audit-event-status">{{ event.status }}</span>
+                                    <time>{{ event.created_at }}</time>
+                                </div>
+                                <p>{{ event.message }}</p>
+                                {% if event.metadata %}
+                                <dl class="audit-event-metadata">
+                                    {% for key, value in event.metadata.items() %}
+                                    <div>
+                                        <dt>{{ key | replace("_", " ") }}</dt>
+                                        <dd>
+                                            {% if "url" in key %}
+                                            <a href="{{ value }}" target="_blank" rel="noreferrer noopener">{{ value }}</a>
+                                            {% else %}
+                                            <code>{{ value }}</code>
+                                            {% endif %}
+                                        </dd>
+                                    </div>
+                                    {% endfor %}
+                                </dl>
+                                {% endif %}
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                </section>
+                {% else %}
+                <p class="small-note">No automation events have been recorded for this work item yet.</p>
+                {% endif %}
+
+            </div>
+        </details>
+        </div>
+
+        <div class="detail-accordion-column">
+        <details class="detail-disclosure">
+            <summary>
+                <span>Work Item Context</span>
+                <small>{{ item.iteration_path or "No iteration" }}</small>
+            </summary>
+            <div class="detail-disclosure-body">
+                <section>
+                    <h4>Metadata</h4>
+                    <dl class="detail-status-list">
+                        <div>
+                            <dt>Iteration</dt>
+                            <dd>{{ item.iteration_path or "-" }}</dd>
+                        </div>
+                        <div>
+                            <dt>Area</dt>
+                            <dd>{{ item.area_path or "-" }}</dd>
+                        </div>
+                        <div>
+                            <dt>Assigned</dt>
+                            <dd>{{ item.reviewer_display_name or "-" }}</dd>
+                        </div>
+                        {% if item.parent_id %}
+                        <div>
+                            <dt>Parent</dt>
+                            <dd>{{ item.parent_type or "Work item" }} {{ item.parent_id }}{% if item.parent_title %} - {{ item.parent_title }}{% endif %}</dd>
+                        </div>
+                        {% endif %}
+                    </dl>
+                </section>
+
+                <section class="rich-work-item-section">
+                    <h4>Description</h4>
+                    {% if item.description_rendered_html %}
+                    <div class="rich-work-item-html">{{ item.description_rendered_html | safe }}</div>
+                    {% else %}
+                    <p class="small-note">No description provided.</p>
+                    {% endif %}
+                </section>
+
+                {% if item.acceptance_rendered_html %}
+                <section class="rich-work-item-section">
+                    <h4>Acceptance Criteria</h4>
+                    <div class="rich-work-item-html">{{ item.acceptance_rendered_html | safe }}</div>
+                </section>
+                {% endif %}
+
+                {% if item.repro_steps_rendered_html %}
+                <section class="rich-work-item-section">
+                    <h4>Repro Steps</h4>
+                    <div class="rich-work-item-html">{{ item.repro_steps_rendered_html | safe }}</div>
+                </section>
+                {% endif %}
+
+                {% if item.attachment_links or item.hyperlink_links %}
+                <section class="rich-work-item-section">
+                    <h4>References</h4>
+                    {% if item.image_attachment_links %}
+                    <div class="attachment-preview-grid">
+                        {% for attachment in item.image_attachment_links %}
+                        <a href="{{ attachment.url }}" target="_blank" rel="noreferrer noopener" class="attachment-preview">
+                            <img src="{{ attachment.proxy_url }}" alt="{{ attachment.name }}">
+                            <span>{{ attachment.name }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="reference-link-list">
+                        {% for attachment in item.attachment_links %}
+                        <a href="{{ attachment.url }}" target="_blank" rel="noreferrer noopener">{{ attachment.name }}</a>
+                        {% endfor %}
+                        {% for link in item.hyperlink_links %}
+                        <a href="{{ link.url }}" target="_blank" rel="noreferrer noopener">{{ link.name }}</a>
+                        {% endfor %}
+                    </div>
+                </section>
+                {% endif %}
+            </div>
+        </details>
+
+        {% if item.parent_id %}
+        <details class="detail-disclosure parent-work-item-context">
+            <summary>
+                <span>Parent Work Item Context</span>
+                <small>{{ item.parent_type or "Work item" }} {{ item.parent_id }}</small>
+            </summary>
+            <div class="detail-disclosure-body">
+                <section>
+                    <h4>Parent</h4>
+                    <dl class="detail-status-list">
+                        <div>
+                            <dt>Work Item</dt>
+                            <dd>
+                                {% if item.parent_url %}
+                                <a href="{{ item.parent_url }}" target="_blank" rel="noreferrer noopener">{{ item.parent_type or "Work item" }} {{ item.parent_id }}</a>
+                                {% else %}
+                                {{ item.parent_type or "Work item" }} {{ item.parent_id }}
+                                {% endif %}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Title</dt>
+                            <dd>{{ item.parent_title or "Parent details could not be resolved from TFS." }}</dd>
+                        </div>
+                        {% if item.parent_state %}
+                        <div>
+                            <dt>State</dt>
+                            <dd>{{ item.parent_state }}</dd>
+                        </div>
+                        {% endif %}
+                    </dl>
+                </section>
+
+                <section class="rich-work-item-section">
+                    <h4>Description</h4>
+                    {% if item.parent_description_rendered_html %}
+                    <div class="rich-work-item-html">{{ item.parent_description_rendered_html | safe }}</div>
+                    {% elif item.parent_repro_steps_rendered_html %}
+                    <p class="small-note">Sourced from the parent work item's Repro Steps field.</p>
+                    <div class="rich-work-item-html">{{ item.parent_repro_steps_rendered_html | safe }}</div>
+                    {% else %}
+                    <p class="small-note">No description was provided on the parent work item.</p>
+                    {% endif %}
+                </section>
+
+                {% if item.parent_acceptance_rendered_html %}
+                <section class="rich-work-item-section">
+                    <h4>Acceptance Criteria</h4>
+                    <div class="rich-work-item-html">{{ item.parent_acceptance_rendered_html | safe }}</div>
+                </section>
+                {% endif %}
+
+                {% if item.parent_repro_steps_rendered_html and item.parent_description_rendered_html %}
+                <section class="rich-work-item-section">
+                    <h4>Repro Steps</h4>
+                    <div class="rich-work-item-html">{{ item.parent_repro_steps_rendered_html | safe }}</div>
+                </section>
+                {% endif %}
+
+                {% if item.parent_attachment_links or item.parent_hyperlink_links %}
+                <section class="rich-work-item-section">
+                    <h4>References</h4>
+                    {% if item.parent_image_attachment_links %}
+                    <div class="attachment-preview-grid">
+                        {% for attachment in item.parent_image_attachment_links %}
+                        <a href="{{ attachment.url }}" target="_blank" rel="noreferrer noopener" class="attachment-preview">
+                            <img src="{{ attachment.proxy_url }}" alt="{{ attachment.name }}">
+                            <span>{{ attachment.name }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="reference-link-list">
+                        {% for attachment in item.parent_attachment_links %}
+                        <a href="{{ attachment.url }}" target="_blank" rel="noreferrer noopener">{{ attachment.name }}</a>
+                        {% endfor %}
+                        {% for link in item.parent_hyperlink_links %}
+                        <a href="{{ link.url }}" target="_blank" rel="noreferrer noopener">{{ link.name }}</a>
+                        {% endfor %}
+                    </div>
+                </section>
+                {% endif %}
+            </div>
+        </details>
+        {% endif %}
+        </div>
+
+        <details class="detail-disclosure">
+            <summary>
+                <span>Branch &amp; Review</span>
+                <small>{{ item.branch_name }}</small>
+            </summary>
+            <div class="detail-disclosure-body">
+                <div class="detail-two-column">
+                    <section>
+                        <h4>Branch Plan</h4>
+                        <form method="post" action="/work-items/{{ item.id }}/plan" class="stack">
+                            <input type="hidden" name="portal" value="{{ selected_portal }}">
+                            <input type="hidden" name="iteration_path" value="{{ selected_iteration }}">
+                            <input type="hidden" name="current_iteration_only" value="{{ 'true' if current_iteration_only else 'false' }}">
+                            <input type="hidden" name="hide_closed" value="{{ 'true' if hide_closed else 'false' }}">
+                            <label>
+                                <span>Triage</span>
+                                <select name="triage_status" {% if item.plan_locked %}disabled{% endif %}>
+                                    <option value="pending" {% if item.triage_status == "pending" %}selected{% endif %}>Pending</option>
+                                    <option value="selected" {% if item.triage_status == "selected" %}selected{% endif %}>Selected</option>
+                                    <option value="skipped" {% if item.triage_status == "skipped" %}selected{% endif %}>Skipped</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span>Base Branch</span>
+                                <select name="selected_base_branch" {% if item.plan_locked %}disabled{% endif %}>
+                                    <option value="">Select a base branch</option>
+                                    {% for branch in portal.branch_chain %}
+                                    <option value="{{ branch }}" {% if branch == item.selected_base_branch %}selected{% endif %}>{{ branch }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label>
+                                <span>Work Type</span>
+                                <select name="work_type" {% if item.plan_locked %}disabled{% endif %}>
+                                    {% for work_type in item.work_type_options %}
+                                    <option value="{{ work_type }}" {% if work_type == item.selected_work_type %}selected{% endif %}>{{ work_type }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label>
+                                <span>Planned Branch Name</span>
+                                <input
+                                    type="text"
+                                    name="planned_branch_name"
+                                    value="{{ item.branch_name }}"
+                                    {% if item.plan_locked %}disabled{% endif %}
+                                >
+                            </label>
+                            <div class="actions">
+                                {% if item.plan_locked %}
+                                <button type="submit" disabled>Plan Locked</button>
+                                {% else %}
+                                <button type="submit">Save Plan</button>
+                                {% endif %}
+                            </div>
+                        </form>
+                    </section>
+                    <section>
+                        <h4>Review</h4>
+                        <dl class="detail-status-list">
+                            <div>
+                                <dt>Name</dt>
+                                <dd>{{ item.reviewer_display_name or "-" }}</dd>
+                            </div>
+                            <div>
+                                <dt>Unique Name</dt>
+                                <dd>{{ item.reviewer_unique_name or "-" }}</dd>
+                            </div>
+                            <div>
+                                <dt>ID</dt>
+                                <dd>{{ item.reviewer_id or "-" }}</dd>
+                            </div>
+                            <div>
+                                <dt>Source</dt>
+                                <dd>{{ item.reviewer_source or "-" }}</dd>
+                            </div>
+                        </dl>
+                    </section>
+                </div>
+
+                <section>
+                    <h4>Branch Names</h4>
+                    <dl class="detail-status-list">
+                        <div>
+                            <dt>Inferred Branch</dt>
+                            <dd>{{ item.inferred_base_branch or "-" }}</dd>
+                        </div>
+                        <div>
+                            <dt>Inferred Type</dt>
+                            <dd>{{ item.inferred_work_type }}</dd>
+                        </div>
+                        <div>
+                            <dt>Generated Branch</dt>
+                            <dd><code>{{ item.generated_branch_name }}</code></dd>
+                        </div>
+                        <div>
+                            <dt>Planned Branch</dt>
+                            <dd><code>{{ item.branch_name }}</code></dd>
+                        </div>
+                    </dl>
+                </section>
+
+                {% if item.linked_work_item_prs or item.linked_parent_prs or item.pr_url %}
+                <section>
+                    <h4>Pull Requests</h4>
+                    <div class="reference-link-list">
+                        {% if item.pr_url %}
+                        <a href="{{ item.pr_url }}" target="_blank">{{ item.pr_link_label }}</a>
+                        {% endif %}
+                        {% for pull_request in item.linked_work_item_prs[:4] %}
+                        <a href="{{ pull_request.url }}" target="_blank">Work item PR #{{ pull_request.id }}</a>
+                        {% endfor %}
+                        {% for pull_request in item.linked_parent_prs[:4] %}
+                        <a href="{{ pull_request.url }}" target="_blank">Parent PR #{{ pull_request.id }}</a>
+                        {% endfor %}
+                    </div>
+                    {% if item.pr_source_branch or item.pr_match_source %}
+                    <dl class="detail-status-list">
+                        {% if item.pr_source_branch %}
+                        <div>
+                            <dt>Matched Branch</dt>
+                            <dd><code>{{ item.pr_source_branch }}</code></dd>
+                        </div>
+                        {% endif %}
+                        {% if item.pr_match_source %}
+                        <div>
+                            <dt>Match Source</dt>
+                            <dd>{{ item.pr_match_source }}</dd>
+                        </div>
+                        {% endif %}
+                    </dl>
+                    {% endif %}
+                </section>
+                {% endif %}
+            </div>
+        </details>
+
+        <details class="detail-disclosure">
+            <summary>
+                <span>Reports &amp; Technical Evidence</span>
+                <small>{{ item.agent_result_status or "No result yet" }}</small>
+            </summary>
+            <div class="detail-disclosure-body">
+                <div class="detail-two-column">
+                    <section>
+                        <h4>Reports</h4>
+                        <div class="reference-link-list">
+                            {% if item.final_report_path %}
+                            <span><strong>Final Report:</strong> <code>{{ item.final_report_path }}</code></span>
+                            <a class="button-link secondary" href="/work-items/{{ item.id }}/report?portal={{ selected_portal }}" target="_blank" rel="noreferrer noopener">View Final Report</a>
+                            {% else %}
+                            <span class="small-note">No final report has been generated yet.</span>
+                            {% endif %}
+                            {% if item.copilot_context_path %}
+                            <span><strong>Context File:</strong> <code>{{ item.copilot_context_path }}</code></span>
+                            <a class="button-link secondary" href="/work-items/{{ item.id }}/capture?portal={{ selected_portal }}&file=summary" target="_blank" rel="noreferrer noopener">View Context Package</a>
+                            {% endif %}
+                        </div>
+                    </section>
+                    <section>
+                        <h4>Provider</h4>
+                        <dl class="detail-status-list">
+                            {% if item.copilot_agent_name %}
+                            <div>
+                                <dt>Agent</dt>
+                                <dd>{{ item.copilot_agent_name }}</dd>
+                            </div>
+                            {% endif %}
+                            {% if item.copilot_workspace_path %}
+                            <div>
+                                <dt>Workspace</dt>
+                                <dd><code>{{ item.copilot_workspace_path }}</code></dd>
+                            </div>
+                            {% endif %}
+                            {% if item.copilot_provider_log_path %}
+                            <div>
+                                <dt>Provider Log</dt>
+                                <dd><code>{{ item.copilot_provider_log_path }}</code></dd>
+                            </div>
+                            {% endif %}
+                            {% if item.copilot_process_id %}
+                            <div>
+                                <dt>Provider PID</dt>
+                                <dd><code>{{ item.copilot_process_id }}</code></dd>
+                            </div>
+                            {% endif %}
+                            {% if item.agent_result_path %}
+                            <div>
+                                <dt>Agent Result</dt>
+                                <dd><code>{{ item.agent_result_path }}</code></dd>
+                            </div>
+                            {% endif %}
+                        </dl>
+                    </section>
+                </div>
+
+                {% if item.agent_result_summary or item.agent_repair_count or item.rerun_active %}
+                <section>
+                    <h4>Agent Notes</h4>
+                    <div class="stack compact">
+                        {% if item.agent_result_summary %}
+                        <span><strong>Summary:</strong> {{ item.agent_result_summary }}</span>
+                        {% endif %}
+                        {% if item.agent_repair_count %}
+                        <span><strong>Repair Attempts:</strong> {{ item.agent_repair_count }}</span>
+                        {% if item.agent_repair_last_reason %}
+                        <span><strong>Last Repair Reason:</strong> {{ item.agent_repair_last_reason }}</span>
+                        {% endif %}
+                        {% endif %}
+                        {% if item.rerun_active %}
+                        <span><strong>Rerun:</strong> active since {{ item.rerun_started_at or "-" }}</span>
+                        {% endif %}
+                    </div>
+                </section>
+                {% endif %}
+
+                {% if item.agent_result_status and item.push_status != "pushed" and not item.has_pr and not item.can_commit_push %}
+                <p class="small-note">Commit &amp; Push becomes available only when the agent result has green light.</p>
+                {% endif %}
+                {% if not item.copilot_workspace_path %}
+                <p class="small-note">Configure the agent workspace path in Settings before launching automation for this portal.</p>
+                {% endif %}
+                {% if not item.has_pr and not item.can_create_draft_pr %}
+                <p class="small-note">Create Draft PR becomes available only after agent-approved changes are pushed.</p>
+                {% endif %}
+            </div>
+        </details>
+    </div>
+</div>

@@ -1,0 +1,57 @@
+{
+  "name": "cmf-content-ai-pipeline-bridge",
+  "displayName": "Content AI Pipeline Bridge",
+  "description": "Runs queued TFS Autonomous Pipeline jobs through the VS Code Copilot Language Model API.",
+  "version": "0.1.0",
+  "publisher": "criticalmanufacturing",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.103.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:cmfContentAiPipelineBridge.enableCopilot",
+    "onCommand:cmfContentAiPipelineBridge.runPendingJobs",
+    "onCommand:cmfContentAiPipelineBridge.showStatus"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cmfContentAiPipelineBridge.enableCopilot",
+        "title": "Content AI: Enable Copilot Bridge"
+      },
+      {
+        "command": "cmfContentAiPipelineBridge.runPendingJobs",
+        "title": "Content AI: Run Pending Copilot Jobs"
+      },
+      {
+        "command": "cmfContentAiPipelineBridge.showStatus",
+        "title": "Content AI: Show Copilot Bridge Status"
+      }
+    ],
+    "configuration": {
+      "title": "Content AI Pipeline Bridge",
+      "properties": {
+        "contentAiPipelineBridge.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Process queued TFS Autonomous Pipeline Copilot jobs in the current workspace."
+        },
+        "contentAiPipelineBridge.maxIterations": {
+          "type": "integer",
+          "default": 14,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Maximum controlled model/tool iterations for a single queued job."
+        }
+      }
+    }
+  }
+}

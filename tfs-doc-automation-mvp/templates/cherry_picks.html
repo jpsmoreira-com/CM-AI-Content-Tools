@@ -1,0 +1,195 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<section class="band">
+    <form method="get" action="{{ request.url_for('cherry_picks') }}" class="panel controls-panel">
+        <input type="hidden" name="load" value="true">
+        <div class="control-grid cherry-pick-controls">
+            <label>
+                <span>Portal</span>
+                <select name="portal">
+                    {% for portal_name in portal_names %}
+                    <option value="{{ portal_name }}" {% if portal_name == selected_portal %}selected{% endif %}>{{ portal_name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>Lookback Days</span>
+                <input type="number" name="lookback_days" value="{{ lookback_days }}" min="0" max="365">
+            </label>
+            <label>
+                <span>Max PRs / Branch</span>
+                <input type="number" name="max_prs_per_branch" value="{{ max_prs_per_branch }}" min="1" max="500">
+            </label>
+            <label>
+                <span>Scope</span>
+                <select name="scope">
+                    {% for option in scope_options %}
+                    <option value="{{ option }}" {% if option == scope %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>Status</span>
+                <select name="status">
+                    {% for option in status_options %}
+                    <option value="{{ option }}" {% if option == status_filter %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>Branch</span>
+                <select name="branch">
+                    {% for option in branch_options %}
+                    <option value="{{ option }}" {% if option == branch_filter %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>Sort By</span>
+                <select name="sort_by">
+                    {% for option in sort_options %}
+                    <option value="{{ option }}" {% if option == sort_by %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="checkbox-field">
+                <span>Descending</span>
+                <input type="checkbox" name="descending" value="true" {% if descending %}checked{% endif %}>
+            </label>
+            <div class="actions single-action">
+                <button type="submit">Load</button>
+            </div>
+        </div>
+        <p class="hint">
+            Read-only propagation analysis for PRs in the configured branch chain. Opening this tab loads the current analysis; use the controls to reload with different filters.
+            Abandoned pull requests are ignored automatically.
+            {% if cherry_pick_skip_labels %}
+            Ignored labels: <code>{{ cherry_pick_skip_labels|join(", ") }}</code>.
+            {% endif %}
+        </p>
+    </form>
+</section>
+
+{% if message %}
+<section class="band">
+    <div class="flash flash-{{ level }}">{{ message }}</div>
+</section>
+{% endif %}
+
+<section class="band">
+    <div class="panel summary-panel">
+        <div class="metric">
+            <span class="metric-label">Repository</span>
+            <strong>{{ repository_name }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Analyzed PRs</span>
+            <strong>{{ pull_request_count }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Ignored</span>
+            <strong>{{ ignored_pull_request_count }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Visible Rows</span>
+            <strong>{{ summary.total }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Missing</span>
+            <strong>{{ summary.missing }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Open</span>
+            <strong>{{ summary.open }}</strong>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Done</span>
+            <strong>{{ summary.done }}</strong>
+        </div>
+    </div>
+</section>
+
+<section class="band">
+    <div class="panel table-panel">
+        <div class="section-header">
+            <div>
+                <h2>Cherry Pick Propagation</h2>
+                <p>Compare original documentation PRs against later branches in the configured chain.</p>
+            </div>
+        </div>
+
+        {% if not loaded %}
+        <p class="empty-state">Choose the filters above and load the Cherry Pick analysis.</p>
+        {% elif not rows %}
+        <p class="empty-state">No pull request families matched the current filters.</p>
+        {% else %}
+        <div class="table-wrap cherry-pick-table-wrap">
+            <table class="cherry-pick-table">
+                <thead>
+                    <tr>
+                        <th class="cherry-primary-column">Work Item / Original PR</th>
+                        <th>Original</th>
+                        {% for chain_branch in branch_chain %}
+                        <th>{{ chain_branch }}</th>
+                        {% endfor %}
+                        <th>Owner</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr class="cherry-row cherry-row-{{ row.overall | lower }}">
+                        <td class="primary-cell">
+                            <div class="id-line">
+                                <span class="state-badge cherry-status cherry-status-{{ row.overall | lower }}">{{ row.overall }}</span>
+                                {% if row.work_item_links %}
+                                    {% for work_item in row.work_item_links %}
+                                    <a href="{{ work_item.url }}" target="_blank">WI {{ work_item.id }}</a>
+                                    {% endfor %}
+                                {% else %}
+                                    <span class="pill subtle">Branch fallback</span>
+                                {% endif %}
+                            </div>
+                            <strong>{{ row.title }}</strong>
+                            <div class="meta-list">
+                                <span>{{ row.family_label }}</span>
+                                <span>{{ row.tracking_mode }}</span>
+                                <span>{{ row.original_created_at_label }}</span>
+                            </div>
+                        </td>
+                        <td>
+                            <a href="{{ row.original_pr_url }}" target="_blank">PR #{{ row.original_pr.pull_request_id }}</a>
+                            <div class="meta-list">
+                                <span>{{ row.original_target }}</span>
+                                <span>{{ row.original_status_label }}</span>
+                            </div>
+                        </td>
+                        {% for chain_branch in branch_chain %}
+                        <td>
+                            {% if chain_branch == row.original_target %}
+                                <span class="state-badge cherry-status cherry-status-original">Original</span>
+                            {% elif chain_branch in row.statuses %}
+                                {% set branch_status = row.statuses[chain_branch] %}
+                                {% set best_pr = branch_status.best_pr %}
+                                {% if best_pr %}
+                                <a class="state-badge cherry-status cherry-status-{{ branch_status.label | lower }}" href="{{ best_pr.url }}" target="_blank">
+                                    {{ branch_status.label }} #{{ best_pr.pull_request_id }}
+                                </a>
+                                {% else %}
+                                <span class="state-badge cherry-status cherry-status-{{ branch_status.label | lower }}">{{ branch_status.label }}</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="muted-cell">-</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                        <td>{{ row.original_created_by or "-" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

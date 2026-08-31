@@ -1,0 +1,57 @@
+{
+  "DEFAULT_PORTAL": "DocumentationPortal",
+  "portals": [
+    {
+      "base_url": "https://tfs-product.cmf.criticalmanufacturing.com/Products",
+      "project": "Product",
+      "repository": "DocumentationPortal",
+      "work_item_project": "Product",
+      "work_item_team": "",
+      "work_item_area_path": "Product\\Development",
+      "copilot_workspace_path": "\\\\wsl.localhost\\Ubuntu\\workspaces\\DocumentationPortal-#12.0",
+      "team": "",
+      "api_version": "6.0",
+      "branch_chain": [
+        "development-102x",
+        "11.1/dev",
+        "11.2/dev",
+        "11.3/dev",
+        "12.0/dev"
+      ],
+      "lookback_days": 7,
+      "max_prs_per_branch": 150,
+      "verify_work_items_via_api": true,
+      "cherry_pick_skip_labels": [
+        "No CP",
+        "no-cp",
+        "not to cp"
+      ],
+      "auth_mode": "Git Credentials"
+    },
+    {
+      "base_url": "https://tfs-product.cmf.criticalmanufacturing.com/Products",
+      "project": "Product",
+      "repository": "DeveloperPortal",
+      "work_item_project": "Product",
+      "work_item_team": "",
+      "work_item_area_path": "Product\\Development",
+      "copilot_workspace_path": "\\\\wsl.localhost\\Ubuntu\\workspaces\\DeveloperPortal-#01",
+      "team": "",
+      "api_version": "6.0",
+      "branch_chain": [
+        "11.1/dev",
+        "11.2/dev",
+        "11.3/dev"
+      ],
+      "lookback_days": 7,
+      "max_prs_per_branch": 150,
+      "verify_work_items_via_api": true,
+      "cherry_pick_skip_labels": [
+        "No CP",
+        "no-cp",
+        "not to cp"
+      ],
+      "auth_mode": "Git Credentials"
+    }
+  ]
+}
