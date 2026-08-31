@@ -1,0 +1,7 @@
+# Local backups created by tool scripts
+_backups/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
