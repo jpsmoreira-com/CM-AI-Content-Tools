@@ -33,3 +33,7 @@ The tools assume two sibling checkouts on the WSL host, bind-mounted into every 
 1. Create `<tool-name>/` at the repository root with a `README.md` that states the purpose, how to run it, and its configuration.
 2. Keep environment variables namespaced (`CONTENT_AI_*` for shared runtime paths, a tool-specific prefix for the rest).
 3. Add a row to the table above and an entry in `CHANGELOG.md`.
+
+## License
+
+[BSD 3-Clause](LICENSE), the same license as the other Critical Manufacturing repositories.
