@@ -1,6 +1,6 @@
 # Project Memory - TFS Documentation Automation MVP
 
-Last updated: 2026-08-21
+Last updated: 2026-08-31
 
 ## Purpose
 
@@ -33,10 +33,10 @@ Target solution:
 Path:
 
 ```text
-C:\CM-REPO\Content\CM-AI-Content-Skills\projects\tfs-doc-automation-mvp
+C:\CM-REPO\Content\CM-AI-Content-Tools\tfs-doc-automation-mvp   (WSL: /workspaces/CM-AI-Content-Tools/tfs-doc-automation-mvp)
 ```
 
-This is the active project copy for the Content AI projects workspace. All future implementation work for this initiative must happen under `C:\CM-REPO\Content\CM-AI-Content-Skills\projects`.
+This is the active project copy. Since 2026-08-31 it lives in the `CM-AI-Content-Tools` repository (one top-level folder per Content Team AI tool). All future implementation work for this initiative must happen there. The shared skills, subagents, and managed rules the pipeline syncs into portals come from the sibling `CM-AI-Content-Skills` checkout (`CONTENT_AI_REPO_PATH`); they are not part of this repository.
 
 This project was originally created as an isolated copy of the existing Cherry Picks dashboard, then evolved into the FastAPI automation pipeline. The original dashboard source should remain untouched unless explicitly requested.
 
@@ -159,7 +159,7 @@ Initial philosophy:
 43. The initial agent instruction body must be configurable from Settings. Safety gates and the result-file contract remain controlled by the application.
 44. Agent execution must be provider-oriented. VS Code Copilot remains the main executor, while Codex, Claude, or another local CLI can be selected when a command template is configured.
 45. Performance problems must be measurable. Dashboard load, work item query, repository enrichment, and TFS request timings are logged to `data/performance.log`.
-46. Centralized Content AI project work must use `C:\CM-REPO\Content\CM-AI-Content-Skills\projects` as the active workspace root.
+46. Centralized Content AI tool work must use the `CM-AI-Content-Tools` repository (`C:\CM-REPO\Content\CM-AI-Content-Tools`, WSL `/workspaces/CM-AI-Content-Tools`) as the active workspace root; shared assets stay in `CM-AI-Content-Skills`.
 47. The Cherry Pick dashboard is now integrated as a FastAPI/Jinja page at `/cherry-picks` instead of running as a separate Streamlit app or iframe.
 48. The integrated Cherry Pick page is a read-only analysis component and reuses the automation project's portal configuration, TFS client, authentication modes, branch chain, and devcontainer task flow.
 
@@ -1008,3 +1008,10 @@ Next recommended tasks:
 
 - Starting the dashboard or worker must not modify the central Content AI runtime copy. Generated `tfs-autonomous-pipeline dashboard` and `worker` commands no longer fetch, stash, change branch, or pull.
 - No runtime update command is exposed. The managed central clone is refreshed only by DevContainer post-create/bootstrap setup, where local-change backup and auto-stash safeguards remain available.
+
+2026-08-31 Moved to the CM-AI-Content-Tools repository:
+
+- The project moved from `CM-AI-Content-Skills/projects/tfs-doc-automation-mvp` to `CM-AI-Content-Tools/tfs-doc-automation-mvp` with its full Git history. `CM-AI-Content-Skills` now holds only the public shared assets (skills, subagents, managed rules); `CM-AI-Content-Tools` is the home for the Content Team's internal AI tools.
+- The runtime contract is now two sibling checkouts: the tools repository at `CONTENT_AI_TOOLS_REPO_PATH` (default `/workspaces/CM-AI-Content-Tools`, image seed `CONTENT_AI_TOOLS_IMAGE_REPO_PATH=/opt/content-ai/CM-AI-Content-Tools`, branch `CONTENT_AI_TOOLS_BRANCH`) and the shared-assets repository at `CONTENT_AI_REPO_PATH` (default `/workspaces/CM-AI-Content-Skills`, unchanged). `PIPELINE_PROJECT_PATH` is `$CONTENT_AI_TOOLS_REPO_PATH/tfs-doc-automation-mvp`.
+- `content-ai-post-create.sh` seeds and refreshes both runtime copies from their image seeds (`ensure_runtime_copy`), `devcontainer-bootstrap.sh` clones or fast-forwards both (`sync_git_checkout`, requiring `CONTENT_AI_TOOLS_REPO_URL` / `CONTENT_AI_REPO_URL` only for a first clone), and `sync-content-ai-assets.sh` no longer derives the asset root from its own location; it uses `CONTENT_AI_REPO_PATH` and fails early when no `skills/` folder is there.
+- Docker image builders must now copy both repositories into `/opt/content-ai/` and point `content-ai-post-create` at `CM-AI-Content-Tools/tfs-doc-automation-mvp/scripts/content-ai-post-create.sh`. Target devcontainers should add `CONTENT_AI_TOOLS_REPO_PATH` and `CONTENT_AI_TOOLS_IMAGE_REPO_PATH` to `remoteEnv`.

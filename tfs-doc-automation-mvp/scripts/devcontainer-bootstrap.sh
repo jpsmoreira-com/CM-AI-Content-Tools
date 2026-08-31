@@ -2,12 +2,17 @@
 set -euo pipefail
 
 TARGET_WORKSPACE="${CONTENT_AI_TARGET_WORKSPACE:-$PWD}"
+# Two checkouts: this tools repository (the pipeline itself) and the shared-assets
+# repository (skills, subagents, managed rules) that the pipeline syncs into portals.
+CONTENT_AI_TOOLS_REPO_PATH="${CONTENT_AI_TOOLS_REPO_PATH:-/workspaces/CM-AI-Content-Tools}"
+CONTENT_AI_TOOLS_REPO_URL="${CONTENT_AI_TOOLS_REPO_URL:-}"
+CONTENT_AI_TOOLS_BRANCH="${CONTENT_AI_TOOLS_BRANCH:-main}"
 CONTENT_AI_REPO_PATH="${CONTENT_AI_REPO_PATH:-/workspaces/CM-AI-Content-Skills}"
 CONTENT_AI_REPO_URL="${CONTENT_AI_REPO_URL:-}"
 CONTENT_AI_BRANCH="${CONTENT_AI_BRANCH:-main}"
 CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturing.com}"
 CONTENT_AI_AUTO_STASH_ON_UPDATE="${CONTENT_AI_AUTO_STASH_ON_UPDATE:-true}"
-PIPELINE_PROJECT_PATH="$CONTENT_AI_REPO_PATH/projects/tfs-doc-automation-mvp"
+PIPELINE_PROJECT_PATH="$CONTENT_AI_TOOLS_REPO_PATH/tfs-doc-automation-mvp"
 PIPELINE_VENV="${TFS_AUTONOMOUS_PIPELINE_VENV:-$HOME/.venvs/tfs-doc-automation-mvp}"
 PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7001}"
 CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-/workspaces/.content-ai-settings/tfs-doc-automation-mvp}"
@@ -225,60 +230,64 @@ ensure_persisted_github_copilot_home() {
   ln -s "$persisted_home" "$HOME/.copilot"
 }
 
-content_ai_worktree_dirty() {
-  [ -n "$(git -C "$CONTENT_AI_REPO_PATH" status --porcelain --untracked-files=all)" ]
+checkout_worktree_dirty() {
+  [ -n "$(git -C "$1" status --porcelain --untracked-files=all)" ]
 }
 
-backup_content_ai_changes() {
-  local timestamp backup_dir
+backup_checkout_changes() {
+  local repo_path="$1" slug timestamp backup_dir
+  slug="$(basename "$repo_path")"
   timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
   backup_dir="$CONTENT_AI_SETTINGS_PATH/backups"
   mkdir -p "$backup_dir"
-  git -C "$CONTENT_AI_REPO_PATH" status --short --untracked-files=all > "$backup_dir/content-ai-pre-update-status-$timestamp.txt" || true
-  git -C "$CONTENT_AI_REPO_PATH" diff > "$backup_dir/content-ai-pre-update-worktree-$timestamp.patch" || true
-  git -C "$CONTENT_AI_REPO_PATH" diff --cached > "$backup_dir/content-ai-pre-update-index-$timestamp.patch" || true
-  echo "Saved Content AI local-change backup metadata to $backup_dir."
+  git -C "$repo_path" status --short --untracked-files=all > "$backup_dir/$slug-pre-update-status-$timestamp.txt" || true
+  git -C "$repo_path" diff > "$backup_dir/$slug-pre-update-worktree-$timestamp.patch" || true
+  git -C "$repo_path" diff --cached > "$backup_dir/$slug-pre-update-index-$timestamp.patch" || true
+  echo "Saved $slug local-change backup metadata to $backup_dir."
 }
 
-stash_content_ai_changes_for_update() {
-  if ! content_ai_worktree_dirty; then
+stash_checkout_changes_for_update() {
+  local label="$1" repo_path="$2"
+  if ! checkout_worktree_dirty "$repo_path"; then
     return 0
   fi
 
-  echo "Content AI runtime copy has local changes at $CONTENT_AI_REPO_PATH."
+  echo "$label runtime copy has local changes at $repo_path."
   if [ "$CONTENT_AI_AUTO_STASH_ON_UPDATE" != "true" ]; then
-    git -C "$CONTENT_AI_REPO_PATH" status --short --untracked-files=all >&2 || true
+    git -C "$repo_path" status --short --untracked-files=all >&2 || true
     echo "Automatic update is paused to avoid overwriting local changes." >&2
     echo "Review the local runtime-copy changes, or set CONTENT_AI_AUTO_STASH_ON_UPDATE=true to let DevContainer setup auto-stash them before updating." >&2
     exit 1
   fi
 
-  backup_content_ai_changes
+  backup_checkout_changes "$repo_path"
   local timestamp
   timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
-  git -C "$CONTENT_AI_REPO_PATH" stash push -u -m "content-ai auto-stash before update $timestamp"
-  echo "Local Content AI runtime changes were stashed before updating. Use 'git -C $CONTENT_AI_REPO_PATH stash list' to inspect them if needed."
+  git -C "$repo_path" stash push -u -m "content-ai auto-stash before update $timestamp"
+  echo "Local $label runtime changes were stashed before updating. Use 'git -C $repo_path stash list' to inspect them if needed."
 }
 
-sync_content_ai_project() {
-  if [ ! -d "$CONTENT_AI_REPO_PATH/.git" ]; then
-    if [ -z "$CONTENT_AI_REPO_URL" ]; then
-      echo "CONTENT_AI_REPO_URL is required when $CONTENT_AI_REPO_PATH is not already cloned." >&2
+# sync_git_checkout <label> <path> <url> <branch> <url-variable-name>
+sync_git_checkout() {
+  local label="$1" repo_path="$2" repo_url="$3" branch="$4" url_variable="$5"
+  if [ ! -d "$repo_path/.git" ]; then
+    if [ -z "$repo_url" ]; then
+      echo "$url_variable is required when $repo_path is not already cloned." >&2
       exit 1
     fi
-    if [ -d "$CONTENT_AI_REPO_PATH" ] && [ ! -w "$CONTENT_AI_REPO_PATH" ] && command -v sudo >/dev/null 2>&1; then
-      sudo chown -R "$(id -u):$(id -g)" "$CONTENT_AI_REPO_PATH"
+    if [ -d "$repo_path" ] && [ ! -w "$repo_path" ] && command -v sudo >/dev/null 2>&1; then
+      sudo chown -R "$(id -u):$(id -g)" "$repo_path"
     fi
-    mkdir -p "$(dirname "$CONTENT_AI_REPO_PATH")"
-    git clone --branch "$CONTENT_AI_BRANCH" "$CONTENT_AI_REPO_URL" "$CONTENT_AI_REPO_PATH"
+    mkdir -p "$(dirname "$repo_path")"
+    git clone --branch "$branch" "$repo_url" "$repo_path"
     return 0
   fi
 
-  echo "Updating Content AI projects at $CONTENT_AI_REPO_PATH..."
-  git -C "$CONTENT_AI_REPO_PATH" fetch origin "$CONTENT_AI_BRANCH" --prune
-  stash_content_ai_changes_for_update
-  git -C "$CONTENT_AI_REPO_PATH" checkout "$CONTENT_AI_BRANCH"
-  git -C "$CONTENT_AI_REPO_PATH" pull --ff-only origin "$CONTENT_AI_BRANCH"
+  echo "Updating $label at $repo_path..."
+  git -C "$repo_path" fetch origin "$branch" --prune
+  stash_checkout_changes_for_update "$label" "$repo_path"
+  git -C "$repo_path" checkout "$branch"
+  git -C "$repo_path" pull --ff-only origin "$branch"
 }
 
 ensure_settings_path
@@ -288,7 +297,8 @@ configure_tfs_git_credentials
 ensure_codex_cli
 ensure_github_copilot_cli
 
-sync_content_ai_project
+sync_git_checkout "Content AI tools" "$CONTENT_AI_TOOLS_REPO_PATH" "$CONTENT_AI_TOOLS_REPO_URL" "$CONTENT_AI_TOOLS_BRANCH" CONTENT_AI_TOOLS_REPO_URL
+sync_git_checkout "Content AI shared assets" "$CONTENT_AI_REPO_PATH" "$CONTENT_AI_REPO_URL" "$CONTENT_AI_BRANCH" CONTENT_AI_REPO_URL
 trust_target_workspace
 
 if [ ! -f "$PIPELINE_PROJECT_PATH/requirements.txt" ]; then
@@ -451,9 +461,11 @@ cat > "$HOME/.local/bin/tfs-autonomous-pipeline" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export CONTENT_AI_SETTINGS_PATH="\${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_SETTINGS_PATH}"
+export CONTENT_AI_TOOLS_REPO_PATH="\${CONTENT_AI_TOOLS_REPO_PATH:-$CONTENT_AI_TOOLS_REPO_PATH}"
+export CONTENT_AI_TOOLS_BRANCH="\${CONTENT_AI_TOOLS_BRANCH:-$CONTENT_AI_TOOLS_BRANCH}"
 export CONTENT_AI_REPO_PATH="\${CONTENT_AI_REPO_PATH:-$CONTENT_AI_REPO_PATH}"
 export CONTENT_AI_BRANCH="\${CONTENT_AI_BRANCH:-$CONTENT_AI_BRANCH}"
-export PIPELINE_PROJECT_PATH="\${PIPELINE_PROJECT_PATH:-\$CONTENT_AI_REPO_PATH/projects/tfs-doc-automation-mvp}"
+export PIPELINE_PROJECT_PATH="\${PIPELINE_PROJECT_PATH:-\$CONTENT_AI_TOOLS_REPO_PATH/tfs-doc-automation-mvp}"
 export CODEX_HOME="\${CODEX_HOME:-$CODEX_HOME}"
 export NPM_CONFIG_PREFIX="\${NPM_CONFIG_PREFIX:-$NPM_CONFIG_PREFIX}"
 export PATH="\$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:\$PATH"

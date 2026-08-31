@@ -372,7 +372,7 @@ Suggested gates:
 
 Runtime settings are stored in a local `.env` file and edited through the dashboard.
 
-When `CONTENT_AI_SETTINGS_PATH` is configured, the dashboard mirrors `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror into that persistent folder and restores them when a fresh central checkout is created. Target devcontainers should bind-mount the WSL host `/workspaces` folder into the container, keep the central tool checkout at `/workspaces/CM-AI-Content-Skills`, keep persistent settings at `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`, and keep the active target repository mounted separately at `/app`. Mounting the full `/workspaces` tree also keeps Git worktree metadata visible when `/app/.git` points to a shared Git directory outside the opened worktree.
+When `CONTENT_AI_SETTINGS_PATH` is configured, the dashboard mirrors `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror into that persistent folder and restores them when a fresh central checkout is created. Target devcontainers should bind-mount the WSL host `/workspaces` folder into the container, keep the central tool checkout at `/workspaces/CM-AI-Content-Tools` and the shared-assets checkout at `/workspaces/CM-AI-Content-Skills`, keep persistent settings at `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`, and keep the active target repository mounted separately at `/app`. Mounting the full `/workspaces` tree also keeps Git worktree metadata visible when `/app/.git` points to a shared Git directory outside the opened worktree.
 
 For portals that use `Git Credentials`, the dashboard writes credentials through `git credential approve`, forces the devcontainer Git helper to `store`, mirrors `~/.git-credentials` to `CONTENT_AI_SETTINGS_PATH/git-credentials`, and restores that file before credential preflight or bootstrap Git operations. This keeps the one-click setup usable after devcontainer rebuilds without storing secrets in the project repository or `.env`. Git author name and email remain a separate preflight requirement before the dashboard can create its commit.
 
@@ -401,17 +401,17 @@ The sync process copies the managed root `AGENTS.md` into the target repository 
 
 Managed shared assets also live in the namespaced `.agents/content-ai/` folder and are referenced by the generated context package and prompts.
 
-The sync source is the centralized `CM-AI-Content-Skills` repository:
+The sync source is the centralized `CM-AI-Content-Skills` checkout (`CONTENT_AI_REPO_PATH`, default `/workspaces/CM-AI-Content-Skills`), a sibling of the `CM-AI-Content-Tools` checkout that contains this pipeline:
 
 ```text
-ai/instructions/AGENTS.md
-ai/manifest.json
-ai/skills/
-ai/agents/
-ai/instructions/
+instructions/AGENTS.md
+manifest.json
+skills/
+agents/
+instructions/
 ```
 
-The sync script writes `.agents/content-ai/install-manifest.json` with copied file checksums and adds `/.agents/content-ai/` to `.git/info/exclude` so the assets remain local runtime material by default. It also excludes untracked root `AGENTS.md`; if the target repository already tracks `AGENTS.md`, it marks the file `skip-worktree` after writing the managed copy to avoid blocking automation safety checks with bootstrap-only local changes.
+After the namespaced copy, the sync script installs the shared skills and subagents with `@sentry/dotagents` (project scope in the target workspace): a portal that commits its own `agents.toml` gets exactly its pinned versions, while a bare target repository gets a generated, git-excluded manifest wired to the synced `.agents/content-ai/` copy (dotagents only accepts path sources inside the project root). Interactive and CLI agents therefore load skills from the standard `.agents/skills/` location with tool symlinks (`.claude/skills`, `.codex/`), and `.agents/content-ai/` remains the pipeline-only context material. The sync script writes `.agents/content-ai/install-manifest.json` with copied file checksums and adds `/.agents/` and the dotagents state to `.git/info/exclude` so the assets remain local runtime material by default. It also excludes untracked root `AGENTS.md`; if the target repository already tracks `AGENTS.md`, it marks the file `skip-worktree` after writing the managed copy to avoid blocking automation safety checks with bootstrap-only local changes.
 
 Target devcontainers can call `scripts/devcontainer-bootstrap.sh` to clone or update the central asset repository, install the pipeline dependencies, create a local `tfs-autonomous-pipeline` wrapper, and sync managed assets into the current workspace.
 
