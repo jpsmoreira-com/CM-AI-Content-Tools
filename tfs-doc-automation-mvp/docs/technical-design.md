@@ -26,7 +26,7 @@ The MVP prioritizes human control, traceability, durable background execution, a
 The MVP must not:
 
 - merge or cherry-pick changes;
-- update work items in TFS;
+- change work item fields or state in TFS (the only allowed work item write is the relation link that associates the created draft PR with its work item);
 - publish documentation;
 - run LLM-generated changes directly in shared branches;
 - assume that every work item needs documentation.
@@ -40,9 +40,9 @@ The previous Cherry Picks dashboard provided useful components:
 - Windows Credentials, PAT, and Git-credential-oriented authentication patterns;
 - portal/repository configuration;
 - PR and work item reads;
-- simple Streamlit UI for internal operations.
+- simple UI for internal operations.
 
-The current project keeps the old Streamlit dashboard as a reference and exposes the useful propagation logic as a FastAPI/Jinja page:
+The current project exposes the useful propagation logic as a FastAPI/Jinja page:
 
 ```text
 tfs-doc-automation-mvp
@@ -69,7 +69,7 @@ Reasons:
 
 - direct write actions such as branch creation and draft PR creation fit better in an explicit request/response backend;
 - it keeps the UI lightweight while giving full control over routes, forms, validation, and state transitions;
-- it avoids the UX limits of Streamlit for row-level operational actions;
+- it avoids the UX limits of notebook-style dashboard frameworks for row-level operational actions;
 - it still keeps the implementation small enough for an internal MVP.
 
 Current stack:
@@ -81,7 +81,7 @@ Persistence: SQLite
 Integration: TFS/Azure DevOps Server REST API
 Runtime configuration: .env
 Background execution: embedded orchestrator plus run_worker.py for service-style execution
-Agent providers: VS Code Copilot Bridge, VS Code Copilot Chat CLI (legacy), Codex CLI, Claude CLI, or custom CLI command templates
+Agent providers: VS Code Copilot Bridge (default), GitHub Copilot CLI, VS Code Copilot Chat CLI (legacy, Windows host only), Codex CLI, Claude CLI, or custom CLI command templates
 ```
 
 If the project later needs a richer client-side experience, the next likely step is:
@@ -148,9 +148,9 @@ Minimum fields per work item:
 - changed date;
 - web URL.
 
-### 7.2 Documentation Impact Classifier
+### 7.2 Documentation Impact Classifier (planned, not implemented)
 
-Responsible for classifying work items before any repository change is attempted.
+Planned component, not present in the current codebase. Triage is currently a manual decision supported by the captured context. When implemented, it would classify work items before any repository change is attempted.
 
 Initial categories:
 
@@ -433,7 +433,7 @@ Responsibilities:
 - filter by scope, status, branch, and sort order;
 - avoid all write operations.
 
-This component keeps the previous Cherry Pick dashboard workflow available without requiring a separate Streamlit server or a separate devcontainer task.
+This component keeps the previous Cherry Pick dashboard workflow available without requiring a separate server or devcontainer task.
 
 ## 8. Dashboard Work Item States
 
@@ -558,22 +558,10 @@ Mitigations:
 
 ## 13. Open Questions
 
-- How should the current sprint be identified: configured iteration path, WIQL query, team settings, or manual selection?
-- Which work item types should enter the MVP: Bug, Product Backlog Item, Task, User Story, or all?
-- Which TFS fields provide the strongest documentation signal: tags, area path, acceptance criteria, description?
-- Which approved Copilot or CM GPT integration can be invoked automatically while guaranteeing that proprietary work item content is processed only by the approved company model?
-- Which documentation repositories should be targeted first: DocumentationPortal, DeveloperPortal, or both?
-- Which validation commands already exist in the documentation repositories?
+- Which additional portals should be onboarded next (CustomerPortal Help, Information Center, Apps Center), and what are their repositories, branch chains, and area paths?
+- Which validation commands exist in each target documentation repository, and should they run automatically after agent edits?
+- Should the documentation impact classifier (7.2) be implemented, and with which rules/LLM balance?
 
-## 14. Recommended Next Step
+## 14. Current Status
 
-Implement Phase 1:
-
-1. Rename/refactor the copied UI so it no longer presents itself as a Cherry Pick dashboard.
-2. Extract the TFS client into a reusable module.
-3. Add a WIQL query for tasks assigned to Content team members.
-4. Add optional current-sprint filtering on top of the assigned-task query.
-5. Create a documentation triage table.
-6. Store the initial classification locally.
-
-This phase already provides value by reducing sprint-start triage effort without introducing operational risk in repositories or PRs.
+Phases 1 through 5 are implemented and validated end-to-end: discovery and triage, branch creation, context capture, provider handoff with durable background reconciliation, validation, push, draft PR creation with reviewer and work item association, final reports, controlled reruns, and the integrated read-only Cherry Pick page. Ongoing work follows the "Current next priorities" list in section 11.

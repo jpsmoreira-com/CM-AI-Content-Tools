@@ -33,16 +33,20 @@ The `.agents/memory.md` file stores persistent project context, decisions, plann
 
 ## Running The Dashboard
 
-```powershell
-cd C:\CM-REPO\Content\CM-AI-Content-Tools\tfs-doc-automation-mvp
+The dashboard runs inside a devcontainer (or any Linux environment with the requirements installed):
+
+```bash
+cd <repos-parent>/CM-AI-Content-Tools/tfs-doc-automation-mvp
 python run_server.py
 ```
 
-Or:
+Or through uvicorn directly (this is what the devcontainer wrappers and the VS Code task use):
 
-```powershell
-.\run_dashboard.ps1
+```bash
+python -m uvicorn main:app --host 0.0.0.0 --port 7001
 ```
+
+In a bootstrapped devcontainer the same is available as `tfs-autonomous-pipeline dashboard`, with the background runner started by `tfs-autonomous-pipeline worker` (or `python run_worker.py`).
 
 The default dashboard port is `7001` so it does not conflict with MkDocs (commonly `8000`) or the MES UI (commonly `7000`). If the preferred port is already in use or blocked, `run_server.py` reads `.env` and can automatically move to the next free port when automatic fallback is enabled.
 
@@ -63,7 +67,6 @@ The default dashboard port is `7001` so it does not conflict with MkDocs (common
 - CM GPT automation preparation on the configured WSL workspace for each portal;
 - VS Code Copilot execution for environments where CM GPT is available as a VS Code-compatible custom model or mode;
 - configurable CLI provider handoff for Codex, Claude, or another local command that can write the expected result file;
-- blocking behavior for Microsoft 365 Copilot Desktop because it is not an automation-capable local repository executor;
 - persisted agent result tracking through `agent-result.json`;
 - final task reports under the configured reports folder;
 - performance timing logs under `data/performance.log`;
@@ -81,7 +84,7 @@ Operational actions stay on the main dashboard. Configuration concerns such as p
 
 ## Cherry Pick Propagation Tab
 
-The `Cherry Picks` page ports the useful propagation analysis from the previous Streamlit dashboard into the FastAPI application. It uses the selected portal configuration, branch chain, authentication mode, lookback window, and work item verification setting.
+The `Cherry Picks` page ports the useful propagation analysis from the previous standalone Cherry Picks dashboard into the FastAPI application. It uses the selected portal configuration, branch chain, authentication mode, lookback window, and work item verification setting.
 
 The page is intentionally read-only:
 
@@ -91,7 +94,7 @@ The page is intentionally read-only:
 - it supports scope, status, branch, and sort filters;
 - it does not create branches, create PRs, update work items, or execute cherry-picks.
 
-This keeps the previous review workflow available as a dashboard component without requiring a second Streamlit process or a second devcontainer task.
+This keeps the previous review workflow available as a dashboard component without requiring a second process or devcontainer task.
 
 ## Portal Configuration Note
 
@@ -105,11 +108,11 @@ Each portal now represents a target documentation repository plus a work item so
 
 ## CM GPT Integration Notes
 
-The agent step is designed as an automatic pipeline step. A provider is valid only when it can edit the configured local WSL repository without user intervention and can write the expected `agent-result.json` file.
+The agent step is designed as an automatic pipeline step. A provider is valid only when it can edit the configured local repository without user intervention and can write the expected `agent-result.json` file.
 
-Microsoft 365 Copilot Desktop is not currently treated as a valid automation provider. It exposes the company `CM GPT` agent to a user-facing chat surface, but this MVP does not have a supported connector that lets that desktop agent check out branches, edit local files, run validations, and report changes back to the dashboard. If it is selected, the dashboard blocks the run instead of reporting a successful automation.
+The shipped default provider is the **VS Code Copilot Bridge** (`vscode_bridge`): a companion VS Code extension in `vscode-copilot-bridge/` that is installed by the devcontainer bootstrap. The dashboard queues a job file for the bridge, the bridge drives the Copilot agent session inside VS Code against the isolated worktree, and it reports status through `bridge-status.json` and the standard `agent-result.json` contract. GitHub Copilot CLI and the other CLI providers below are the alternatives for fully headless runs. The `VS Code Copilot Chat CLI` provider is legacy and only works when the pipeline runs on a Windows host.
 
-For VS Code Copilot:
+For VS Code Copilot (bridge and legacy chat providers):
 
 - a custom Copilot agent file is generated under the WSL user profile;
 - a work-item-specific context package is generated under the target repository `.automation-context/copilot/<branch>/` directory, including Markdown, JSON, and HTML exports of the work item content;
@@ -123,7 +126,7 @@ For VS Code Copilot:
 - the prompt names the configured Settings `Agent Name` and `Model Name` as the functional agent/model contract; the generated VS Code transport mode is only used to deliver the handoff and must not be treated as a reason to stop the run by itself;
 - strict model-safety mode is blocked for the automatic pipeline because it prepares context only and does not execute repository edits.
 
-For GitHub Copilot CLI, the recommended autonomous Copilot provider:
+For GitHub Copilot CLI, the recommended provider for fully headless runs:
 
 - select `GitHub Copilot CLI (autonomous)` in `Settings`;
 - select an entitled Copilot CLI model in `Model Name` (for example, the configured GPT 5.6 model);
@@ -290,15 +293,3 @@ The API fallback keeps context size bounded and skips binary, unavailable, or ve
 
 The dashboard list is optimized as a paginated summary-first view. Initial renders use WIQL plus a lightweight work item batch for the visible page, skip remote branch/PR scans, and rely on local persisted state for card-level status. Full work item details, parent information, remote repository validation, and action forms are loaded on demand when a card is opened.
 
-## Copied Baseline
-
-The following files were copied from the Cherry Picks dashboard:
-
-- `app.py`
-- `tfs_dashboard.py`
-- `requirements.txt`
-- `run_dashboard.ps1`
-- `.gitignore`
-- `config/tfs_dashboard.json`
-
-The goal is to keep refactoring this baseline incrementally, with reusable TFS services separated from the dashboard layer and with future LLM-driven editing added on top of the current branch/PR workflow.
