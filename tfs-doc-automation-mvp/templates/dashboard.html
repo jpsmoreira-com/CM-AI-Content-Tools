@@ -173,10 +173,19 @@
         </div>
         <div class="metric">
             <span class="metric-label">Automation Runner</span>
-            <strong>{% if runtime_settings.automation_runner_enabled %}Enabled{% else %}Disabled{% endif %}</strong>
+            <strong>{% if runtime_settings.automation_runner_enabled %}Enabled{% else %}Disabled{% endif %}{% if automation_runner.consecutive_failures %} <span class="status-error">(failing)</span>{% endif %}</strong>
         </div>
     </div>
 </section>
+
+{% if automation_runner.consecutive_failures %}
+<section class="band">
+    <div class="alert error">
+        The background automation runner has failed {{ automation_runner.consecutive_failures }} cycle(s) in a row{% if automation_runner.last_error_reference_id %} (ref <code>{{ automation_runner.last_error_reference_id }}</code>){% endif %}: {{ automation_runner.last_error }}
+        <a href="{{ request.url_for('settings_page') }}?portal={{ selected_portal }}&tab=automation">Open runner status</a>
+    </div>
+</section>
+{% endif %}
 
 {% if auto_refresh_seconds %}
 <section class="band">

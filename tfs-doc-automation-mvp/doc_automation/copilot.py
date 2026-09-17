@@ -18,6 +18,10 @@ from urllib.parse import quote
 class CopilotIntegrationError(RuntimeError):
     """Raised when the CM GPT handoff cannot be prepared safely."""
 
+    def __init__(self, message: str, *, code: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+
 
 UNC_WSL_RE = re.compile(r"^\\\\wsl(?:\.localhost)?\\([^\\]+)\\?(.*)$", re.IGNORECASE)
 DOCX_RE = re.compile(r"\b[^\\/\s<>:\"|?*]+\.(?:docx|docm|doc)\b", re.IGNORECASE)
@@ -1582,7 +1586,10 @@ def _ensure_current_branch(distro: str, workspace_path: str, branch_name: str) -
         raise CopilotIntegrationError(result.stdout.strip() or result.stderr.strip() or f"Workspace is not on '{branch_name}'.")
     current_branch = result.stdout.strip()
     if current_branch != branch_name:
-        raise CopilotIntegrationError(f"Workspace is on branch '{current_branch}', expected '{branch_name}'.")
+        raise CopilotIntegrationError(
+            f"Workspace is on branch '{current_branch}', expected '{branch_name}'.",
+            code="AGENT_WORKSPACE_BRANCH_MISMATCH",
+        )
 
 
 def _normalize_instruction_relative_path(path_value: str) -> str:
@@ -2265,7 +2272,10 @@ def _validate_commit_file_paths(changed_files: List[str]) -> List[str]:
         if path.startswith(".git/"):
             raise CopilotIntegrationError(f"Agent result contains a Git metadata path that cannot be committed: {changed_file}")
         if path == WORKSPACE_CONTEXT_ROOT.split("/", 1)[0] or path.startswith(WORKSPACE_CONTEXT_ROOT.split("/", 1)[0] + "/"):
-            raise CopilotIntegrationError(f"Agent result contains an automation context path that cannot be committed: {changed_file}")
+            raise CopilotIntegrationError(
+                f"Agent result contains an automation context path that cannot be committed: {changed_file}",
+                code="AGENT_CONTEXT_PATH_IN_CHANGES",
+            )
         if path not in safe_files:
             safe_files.append(path)
     return safe_files

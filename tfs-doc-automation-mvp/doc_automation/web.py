@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import logging
+from html import escape
 from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import DEFAULT_RUNTIME_SETTINGS
+from .diagnostics import configure_logging, get_logger, get_reference_id, reference_scope, resolve_log_file
 from .orchestrator import AutomationOrchestrator
 from .services import AutomationService, ServiceError
+from .storage import load_runner_status
 from .tfs_client import TfsApiError
 
 
+configure_logging()
+LOGGER = get_logger("web")
 APP_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = Jinja2Templates(directory=str(APP_DIR / "templates"))
 SERVICE = AutomationService()
@@ -32,11 +38,46 @@ def stop_automation_orchestrator() -> None:
     ORCHESTRATOR.stop()
 
 
+@app.middleware("http")
+async def attach_reference_id(request: Request, call_next):
+    with reference_scope() as reference_id:
+        # Exception handlers run outside this middleware, so keep the id on the request too.
+        request.state.reference_id = reference_id
+        response = await call_next(request)
+        response.headers["X-Reference-Id"] = reference_id
+        return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> Response:
+    reference_id = getattr(request.state, "reference_id", "") or get_reference_id()
+    with reference_scope(reference_id):
+        LOGGER.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc, exc_info=exc)
+    body = (
+        "<!doctype html><html><head><title>Unexpected error</title></head><body style=\"font-family: sans-serif; padding: 2rem;\">"
+        "<h1>Unexpected error</h1>"
+        f"<p>{escape(str(exc) or exc.__class__.__name__)}</p>"
+        f"<p>Reference id: <code>{escape(reference_id)}</code>. Share it with support together with the "
+        f"diagnostics log at <code>{escape(str(resolve_log_file()))}</code>.</p>"
+        "<p><a href=\"/\">Back to dashboard</a></p></body></html>"
+    )
+    return HTMLResponse(body, status_code=500)
+
+
 def _safe_flash_message(message: str, *, max_length: int = 1200) -> str:
     clean_message = str(message or "").strip()
     if len(clean_message) <= max_length:
         return clean_message
     return clean_message[:max_length].rstrip() + " ... [truncated]"
+
+
+def _with_reference(message: str, level: str) -> str:
+    clean_message = str(message or "").strip()
+    if level not in {"error", "warning"} or not clean_message:
+        return clean_message
+    LOGGER.log(logging.ERROR if level == "error" else logging.WARNING, "User-facing %s: %s", level, clean_message)
+    reference_id = get_reference_id()
+    return f"{clean_message} (ref {reference_id})" if reference_id else clean_message
 
 
 def _summarize_bulk_result_details(results: list[dict[str, object]], *, max_items: int = 3) -> str:
@@ -85,7 +126,7 @@ def _redirect_to_dashboard(
     query_params = {
         "portal": portal,
         "iteration_path": iteration_path,
-        "message": _safe_flash_message(message),
+        "message": _safe_flash_message(_with_reference(message, level)),
         "level": level,
     }
     if current_iteration_only is not None:
@@ -109,7 +150,7 @@ def _redirect_to_settings(
 ) -> RedirectResponse:
     query_params = {
         "portal": portal,
-        "message": _safe_flash_message(message),
+        "message": _safe_flash_message(_with_reference(message, level)),
         "level": level,
     }
     clean_tab = _normalize_settings_tab(tab)
@@ -361,6 +402,41 @@ def context_capture_package(
     return TEMPLATES.TemplateResponse(request, "capture.html", context)
 
 
+@app.get("/work-items/{work_item_id}/diagnostics.zip")
+def diagnostics_bundle(work_item_id: int, portal: str = "") -> Response:
+    try:
+        filename, payload = SERVICE.build_diagnostics_bundle(portal_name=portal, work_item_id=work_item_id)
+    except ServiceError as exc:
+        return Response(str(exc), status_code=404, media_type="text/plain")
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/health")
+def health() -> JSONResponse:
+    database_ok = True
+    database_error = ""
+    try:
+        load_runner_status()
+    except Exception as exc:
+        database_ok = False
+        database_error = str(exc)
+    runner = ORCHESTRATOR.snapshot()
+    healthy = database_ok and bool(runner.get("healthy", True))
+    payload = {
+        "status": "ok" if healthy else "degraded",
+        "database_ok": database_ok,
+        "database_error": database_error,
+        "runner": runner,
+        "log_file": str(resolve_log_file()),
+        "reference_id": get_reference_id(),
+    }
+    return JSONResponse(payload, status_code=200 if healthy else 503)
+
+
 @app.get("/tfs-assets")
 def tfs_asset(
     portal: str = "",
@@ -398,6 +474,7 @@ def settings_page(
             "active_page": "settings",
             "active_settings_tab": active_settings_tab,
             "automation_runner": ORCHESTRATOR.snapshot(),
+            "log_file": str(resolve_log_file()),
         }
     )
     return TEMPLATES.TemplateResponse(request, "settings.html", context)

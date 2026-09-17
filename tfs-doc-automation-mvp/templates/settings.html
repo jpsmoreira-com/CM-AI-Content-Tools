@@ -586,7 +586,15 @@
                         </label>
                     </div>
                     <p class="hint">Continuous mode only starts automation for open current-iteration tasks when the iteration can be resolved. Existing in-progress flows are resumed regardless of whether continuous discovery is enabled.</p>
-                    <p class="hint">Embedded runner status: <code>{{ "running" if automation_runner.running else "stopped" }}</code>{% if automation_runner.last_reconcile_at %}; last reconcile: <code>{{ automation_runner.last_reconcile_at }}</code>{% endif %}</p>
+                    <p class="hint">Runner status: <code>{{ "running" if automation_runner.running else "stopped" }}</code>{% if automation_runner.last_reconcile_at %}; last successful cycle: <code>{{ automation_runner.last_reconcile_at }}</code>{% endif %}{% if automation_runner.consecutive_failures %}; <strong class="status-error">{{ automation_runner.consecutive_failures }} consecutive failed cycle(s)</strong>{% endif %}</p>
+                    {% if automation_runner.last_error %}
+                    <div class="alert {% if automation_runner.consecutive_failures %}error{% else %}warning{% endif %}">
+                        <strong>Last runner error</strong>{% if automation_runner.last_error_at %} at <code>{{ automation_runner.last_error_at }}</code>{% endif %}{% if automation_runner.last_error_reference_id %} (ref <code>{{ automation_runner.last_error_reference_id }}</code>){% endif %}:
+                        <pre class="capture-raw">{{ automation_runner.last_error }}</pre>
+                        {% if not automation_runner.consecutive_failures %}<span class="small-note">Later cycles completed successfully.</span>{% endif %}
+                    </div>
+                    {% endif %}
+                    <p class="hint">Health endpoint: <code>/health</code>. Application log: <code>{{ log_file }}</code></p>
                     <div class="actions">
                         <button type="submit" formaction="/automation/run-cycle" formmethod="post">Run Automation Cycle Now</button>
                     </div>

@@ -219,6 +219,9 @@
                                 </ol>
                             </div>
                             {% endif %}
+                            {% if item.agent_result_guidance.codes %}
+                            <p class="small-note">Error code{% if item.agent_result_guidance.codes|length > 1 %}s{% endif %}: {% for code in item.agent_result_guidance.codes %}<code>{{ code }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+                            {% endif %}
                             {% if item.agent_result_guidance.technical_details %}
                             <details class="technical-details">
                                 <summary>Technical details</summary>
@@ -247,6 +250,7 @@
                                     <strong>{{ event.stage }}</strong>
                                     <span class="audit-event-status">{{ event.status }}</span>
                                     <time>{{ event.created_at }}</time>
+                                    {% if event.reference_id %}<code class="small-note" title="Reference id — search the application log for it">ref {{ event.reference_id }}</code>{% endif %}
                                 </div>
                                 <p>{{ event.message }}</p>
                                 {% if event.metadata %}
@@ -601,7 +605,9 @@
                             {% if item.copilot_context_path %}
                             <span><strong>Context File:</strong> <code>{{ item.copilot_context_path }}</code></span>
                             <a class="button-link secondary" href="/work-items/{{ item.id }}/capture?portal={{ selected_portal }}&file=summary" target="_blank" rel="noreferrer noopener">View Context Package</a>
+                            <a class="button-link secondary" href="/work-items/{{ item.id }}/capture?portal={{ selected_portal }}&file=agent_result" target="_blank" rel="noreferrer noopener">View Agent Diagnostics</a>
                             {% endif %}
+                            <a class="button-link secondary" href="/work-items/{{ item.id }}/diagnostics.zip?portal={{ selected_portal }}">Download Diagnostics Bundle</a>
                         </div>
                     </section>
                     <section>

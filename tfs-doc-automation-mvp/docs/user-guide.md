@@ -59,8 +59,14 @@ Leave provider, model, execution runtime, worktree, and credential settings as c
 
 ## Troubleshooting
 
+When something fails, the dashboard message ends with a **reference id** such as `(ref a3f9c1b2)`. Every event in the work item's History carries the same kind of id. Include it when you report a problem — it points support to the exact log lines.
+
+For agent problems, open the work item card and use **Download Diagnostics Bundle** (a zip with the run state, the event timeline, the agent prompt, the agent result, the provider log and the bridge status). **View Agent Diagnostics** shows the same files in the browser. Agent failures also show an **error code** (for example `AGENT_NO_GREEN_LIGHT` or `PROVIDER_EXITED`) next to the guidance; the maintainers guide lists what each code means.
+
 | Symptom | What to do |
 | --- | --- |
+| Dashboard shows "The background automation runner has failed N cycles in a row" | The runner cannot complete its cycle (usually TFS connectivity or credentials). Open `Settings > Automation` for the last error and its reference id, fix the cause, and the banner clears on the next successful cycle. |
+| A page shows "Unexpected error" with a reference id | Report the reference id; the full stack trace is in the application log. |
 | Settings reports the Copilot bridge is not installed | Rebuild/reopen the devcontainer so the bootstrap installs the extension. |
 | Credential preflight fails | Re-run `TFS Git Credentials Setup` in `Settings > Connection`; check the token has code read/write scope. |
 | "Workspace does not exist inside the current runtime" | The portal's workspace path points to a clone that is not mounted in this container; ask a maintainer to fix the portal configuration. |

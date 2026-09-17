@@ -5,6 +5,7 @@ import socket
 import uvicorn
 
 from doc_automation.config import load_runtime_settings
+from doc_automation.diagnostics import configure_logging
 
 
 def reserve_socket() -> tuple[socket.socket, str, int]:
@@ -39,8 +40,9 @@ def reserve_socket() -> tuple[socket.socket, str, int]:
 
 
 if __name__ == "__main__":
+    log_file = configure_logging()
     reserved_socket, host, port = reserve_socket()
-    print(f"Starting dashboard on http://{host}:{port}")
+    print(f"Starting dashboard on http://{host}:{port} (log file: {log_file})")
     config = uvicorn.Config("main:app", host=host, port=port, reload=False, use_colors=False)
     server = uvicorn.Server(config)
     server.run(sockets=[reserved_socket])

@@ -87,6 +87,30 @@ Known risk: `get_portal_config` silently falls back to the first portal when the
 
 Onboarding a new portal is a config + clone exercise: add the entry, provision the target repository clone in the shared workspace, and confirm branch-chain and reviewer conventions with the owning team.
 
+## Observability And Support
+
+- **Application log**: `doc_automation/diagnostics.py` configures a rotating file log (`<CONTENT_AI_SETTINGS_PATH>/logs/doc-automation.log`, falling back to `data/logs/` when the settings path is unset) plus stdout, for both the dashboard and `run_worker.py`. Uvicorn tracebacks are written to the same file. Every line carries the reference id in brackets.
+- **Reference ids**: a short hex id is assigned per HTTP request (middleware, also returned as the `X-Reference-Id` header) and per background cycle. It is stored on every `work_item_events` row (`reference_id`), appended to user-facing error/warning messages as `(ref …)`, and shown in the card History — grep the log for it.
+- **Events double as log lines**: `storage._insert_work_item_event` logs each event, so stage transitions and stored `*_error` fields appear in the log without extra calls.
+- **Runner health**: the orchestrator persists its status in the `runner_status` table (last successful cycle, last error, reference id, consecutive failure count). `GET /health` returns it as JSON (`503` while degraded) and the Settings page and dashboard banner render it. Cycle failures are logged with stack traces.
+- **Unhandled exceptions**: a global handler logs the traceback and returns a minimal page with the reference id.
+- **Diagnostics per work item**: `GET /work-items/{id}/capture?file=<key>` serves the run artifacts (`DIAGNOSTIC_PACKAGE_FILES` in `services.py`: summary, instructions, manifest, prompt, agent result, provider log, bridge status), and `GET /work-items/{id}/diagnostics.zip` bundles them with `state.json`, `events.json` and `runner-status.json`.
+- **Agent result codes**: `mark_agent_result(..., agent_result_code=...)` stores machine-readable codes (comma-separated) in `work_item_state.agent_result_code`; `ServiceError` / `CopilotIntegrationError` accept `code=`. `build_agent_result_guidance` maps codes to blocker text through `AGENT_RESULT_CODE_BLOCKERS` and falls back to substring matching only for rows written before codes existed. Add a new code to that table rather than matching on wording.
+
+| Code | Meaning |
+| --- | --- |
+| `AGENT_NO_GREEN_LIGHT` | Result had changed files or a completion status without `green_light`. |
+| `AGENT_NO_CHANGED_FILES` | Green light without any changed files. |
+| `AGENT_RESULT_INVALID` | `agent-result.json` could not be parsed as the expected contract. |
+| `AGENT_INSTRUCTIONS_UNCONFIRMED` | Required repository instruction files missing from `instruction_files_read`. |
+| `AGENT_CONTEXT_PATH_IN_CHANGES` | Changed files include `.automation-context/` paths. |
+| `AGENT_WORKSPACE_BRANCH_MISMATCH` | Workspace is on a different branch than the planned one. |
+| `AGENT_PREFLIGHT_FAILED` / `AGENT_VALIDATION_FAILED` | Dashboard validation of the changes failed. |
+| `AGENT_REPAIR_LAUNCH_FAILED` | Automatic repair session could not start. |
+| `PROVIDER_NO_PROCESS` / `PROVIDER_EXITED` / `PROVIDER_WAITING_USER` | CLI/bridge provider did not start, died, or needs user action. |
+| `AGENT_RESULT_TIMEOUT` | Poll loop gave up waiting for `agent-result.json`. |
+| `FLOW_EXCEPTION` | Unexpected exception in the automatic flow (see log by reference id). |
+
 ## Known Debt
 
 - **No automated tests.** Verification is manual (compile + smoke-run + recorded end-to-end validations in `.agents/memory.md`). Recommended starting points for a test suite: `branching.py` (pure functions), `config.py` normalization/env round-trip, and `tfs_client.py` against recorded REST responses.

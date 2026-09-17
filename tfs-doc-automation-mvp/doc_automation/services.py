@@ -9,10 +9,12 @@ import shutil
 import subprocess
 import threading
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
+import io
 import re as std_re
 import time
-from typing import Any, Dict, List, Optional
+import zipfile
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote, urlencode, urljoin, urlparse
 
 from .branching import WORK_TYPES, merge_branch_plan, normalize_branch_name, version_prefix_from_branch
@@ -63,12 +65,14 @@ from .config import (
     save_vscode_settings,
 )
 from .context_capture import build_capture_error_package, build_context_capture_package
+from .diagnostics import get_logger, get_reference_id
 from .storage import (
     get_work_item_states,
     ensure_work_item_events_from_state,
     init_storage,
     list_auto_flow_states,
     list_work_item_events,
+    load_runner_status,
     mark_agent_result,
     mark_agent_repair_started,
     mark_auto_flow_enabled,
@@ -116,8 +120,69 @@ DEFAULT_RATIONALE_TEXT = (
 MAX_WORKSPACE_OPTIONS = 40
 
 
+LOGGER = get_logger("services")
+
+
 class ServiceError(RuntimeError):
     """Raised when a dashboard action cannot be completed safely."""
+
+    def __init__(self, message: str, *, code: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+AGENT_RESULT_CODE_BLOCKERS = {
+    "AGENT_NO_GREEN_LIGHT": "The agent did not identify a safe documentation update, so no changes were pushed.",
+    "AGENT_NO_CHANGED_FILES": "The agent reported success but listed no changed files, so there is nothing to commit.",
+    "AGENT_RESULT_INVALID": "The agent result file could not be parsed as the expected structured result.",
+    "AGENT_INSTRUCTIONS_UNCONFIRMED": "The returned report did not confirm the repository instructions required by the pipeline.",
+    "AGENT_CONTEXT_PATH_IN_CHANGES": "The returned report included an internal automation file instead of only repository changes.",
+    "AGENT_WORKSPACE_BRANCH_MISMATCH": "The configured workspace is on a different branch than the planned work-item branch.",
+    "AGENT_PREFLIGHT_FAILED": "The dashboard preflight validation of the agent changes failed.",
+    "AGENT_VALIDATION_FAILED": "The agent changes did not pass the push validation checks.",
+    "AGENT_REPAIR_LAUNCH_FAILED": "The automatic repair session could not be started.",
+    "PROVIDER_NO_PROCESS": "The CLI provider launch did not return a process id.",
+    "PROVIDER_EXITED": "The agent provider stopped before writing a result.",
+    "PROVIDER_WAITING_USER": "The agent provider is waiting for a user action such as authorization.",
+    "AGENT_RESULT_TIMEOUT": "The pipeline stopped waiting for the agent result file.",
+    "FLOW_EXCEPTION": "An unexpected error interrupted the automatic flow.",
+}
+
+
+# Files a support engineer needs from one agent run. "capture" files live in the
+# capture sub-package, "package" files next to the prompt, and the bridge status
+# file sits at the automation context root shared by all runs.
+DIAGNOSTIC_PACKAGE_FILES = {
+    "summary": {"label": "Summary", "filename": "summary.md", "markdown": True, "location": "capture"},
+    "instructions": {"label": "Instructions", "filename": "INSTRUCTIONS.md", "markdown": True, "location": "capture"},
+    "manifest": {"label": "Manifest", "filename": "manifest.json", "markdown": False, "location": "capture"},
+    "prompt": {"label": "Agent Prompt", "filename": "prompt.md", "markdown": True, "location": "package"},
+    "agent_result": {"label": "Agent Result", "filename": "agent-result.json", "markdown": False, "location": "package"},
+    "provider_log": {"label": "Provider Log", "filename": "agent-provider.log", "markdown": False, "location": "package"},
+    "bridge_status": {"label": "Bridge Status", "filename": "bridge-status.json", "markdown": False, "location": "context_root"},
+}
+
+
+def _resolve_diagnostic_file_path(context_directory: str, definition: Dict[str, Any]) -> str:
+    location = str(definition.get("location") or "package")
+    if location == "capture":
+        return f"{context_directory}/capture/{definition['filename']}"
+    if location == "context_root":
+        return f"{context_directory.rsplit('/', 1)[0]}/{definition['filename']}"
+    return f"{context_directory}/{definition['filename']}"
+
+
+def split_result_codes(value: str) -> List[str]:
+    return [token.strip() for token in str(value or "").split(",") if token.strip()]
+
+
+def join_result_codes(codes: Iterable[str]) -> str:
+    unique: List[str] = []
+    for code in codes:
+        clean = str(code or "").strip()
+        if clean and clean not in unique:
+            unique.append(clean)
+    return ",".join(unique)
 
 
 def _cache_get(key: tuple) -> Any:
@@ -1295,27 +1360,35 @@ def summarize_automation_stage(item: Dict[str, Any]) -> str:
     return "Plan branch"
 
 
+def _legacy_guidance_blockers(error: str, summary: str) -> List[str]:
+    # Rows stored before result codes existed only carry free text.
+    blockers: List[str] = []
+    lower_error = error.lower()
+    lower_summary = summary.lower()
+    if "did not give green light" in lower_error or "no accurate documentation change" in lower_summary:
+        blockers.append(AGENT_RESULT_CODE_BLOCKERS["AGENT_NO_GREEN_LIGHT"])
+    if "instruction_files_read" in lower_error:
+        blockers.append(AGENT_RESULT_CODE_BLOCKERS["AGENT_INSTRUCTIONS_UNCONFIRMED"])
+    if "automation context path" in lower_error:
+        blockers.append(AGENT_RESULT_CODE_BLOCKERS["AGENT_CONTEXT_PATH_IN_CHANGES"])
+    if "workspace is on branch" in lower_error:
+        blockers.append(AGENT_RESULT_CODE_BLOCKERS["AGENT_WORKSPACE_BRANCH_MISMATCH"])
+    return blockers
+
+
 def build_agent_result_guidance(item: Dict[str, Any]) -> Dict[str, Any]:
     """Translate stored agent diagnostics into an operational dashboard outcome."""
     status = str(item.get("agent_result_status") or "").strip().lower()
     error = str(item.get("agent_result_error") or "").strip()
     summary = str(item.get("agent_result_summary") or "").strip()
+    codes = split_result_codes(str(item.get("agent_result_code") or ""))
     if not status and not error:
         return {}
 
     if status == "needs_agent_fix":
-        blockers: List[str] = []
-        lower_error = error.lower()
-        lower_summary = summary.lower()
-        no_change = "did not give green light" in lower_error or "no accurate documentation change" in lower_summary
-        if no_change:
-            blockers.append("The agent did not identify a safe documentation update, so no changes were pushed.")
-        if "instruction_files_read" in lower_error:
-            blockers.append("The returned report did not confirm the repository instructions required by the pipeline.")
-        if "automation context path" in lower_error:
-            blockers.append("The returned report included an internal automation file instead of only repository changes.")
-        if "workspace is on branch" in lower_error:
-            blockers.append("The automatic repair could not start because the configured workspace changed to a different branch.")
+        blockers = [AGENT_RESULT_CODE_BLOCKERS[code] for code in codes if code in AGENT_RESULT_CODE_BLOCKERS]
+        if not blockers:
+            blockers = _legacy_guidance_blockers(error, summary)
         if not blockers:
             blockers.append("The agent result did not meet the validation requirements for an automatic push.")
         return {
@@ -1323,6 +1396,7 @@ def build_agent_result_guidance(item: Dict[str, Any]) -> Dict[str, Any]:
             "title": "Agent run completed, but no safe update is ready to publish",
             "summary": summary or "The result needs correction before the pipeline can continue.",
             "blockers": blockers,
+            "codes": codes,
             "next_steps": [
                 "Review the final report and captured work item context.",
                 "Keep the target workspace on the planned work-item branch before rerunning the agent.",
@@ -1332,12 +1406,18 @@ def build_agent_result_guidance(item: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     if status in {"blocked", "invalid", "error"}:
+        blockers = [AGENT_RESULT_CODE_BLOCKERS[code] for code in codes if code in AGENT_RESULT_CODE_BLOCKERS]
+        blockers.append("No changes were pushed and no Draft PR was created.")
         return {
             "level": "error",
             "title": "Agent execution needs attention",
             "summary": summary or "The agent result cannot be used to continue the pipeline.",
-            "blockers": ["No changes were pushed and no Draft PR was created."],
-            "next_steps": ["Review the technical details, correct the reported issue, and rerun the agent."],
+            "blockers": blockers,
+            "codes": codes,
+            "next_steps": [
+                "Review the technical details, correct the reported issue, and rerun the agent.",
+                "Use the Diagnostics bundle on the work item card when reporting the problem.",
+            ],
             "technical_details": error,
         }
 
@@ -1490,7 +1570,8 @@ def validate_instruction_acknowledgement(
         suffix = f", plus {len(missing) - 8} more" if len(missing) > 8 else ""
         raise ServiceError(
             "The agent result did not confirm that repository instructions were read. "
-            f"Missing `instruction_files_read` entries: {displayed}{suffix}."
+            f"Missing `instruction_files_read` entries: {displayed}{suffix}.",
+            code="AGENT_INSTRUCTIONS_UNCONFIRMED",
         )
 
 
@@ -1819,6 +1900,7 @@ class AutomationService:
                     pull_request_id,
                 )
             except Exception:
+                LOGGER.warning("Could not load pull request %s; treating it as blocking.", pull_request_id, exc_info=True)
                 blocking_pull_requests.append(pull_request)
                 continue
             if pull_request_is_abandoned(current_pull_request):
@@ -1851,6 +1933,7 @@ class AutomationService:
                 normalized_pull_request_id,
             )
         except Exception:
+            LOGGER.warning("Could not load pull request %s to check abandonment.", normalized_pull_request_id, exc_info=True)
             return False
         return pull_request_is_abandoned(pull_request)
 
@@ -2223,11 +2306,13 @@ class AutomationService:
         agent_result_status = str((state or {}).get("agent_result_status") or "")
         agent_result_summary = str((state or {}).get("agent_result_summary") or "")
         agent_result_error = str((state or {}).get("agent_result_error") or "")
+        agent_result_code = str((state or {}).get("agent_result_code") or "")
         agent_result_guidance = build_agent_result_guidance(
             {
                 "agent_result_status": agent_result_status,
                 "agent_result_summary": agent_result_summary,
                 "agent_result_error": agent_result_error,
+                "agent_result_code": agent_result_code,
             }
         )
 
@@ -2263,6 +2348,7 @@ class AutomationService:
             "agent_result_path": str((state or {}).get("agent_result_path") or ""),
             "agent_result_summary": agent_result_summary,
             "agent_result_error": agent_result_error,
+            "agent_result_code": agent_result_code,
             "agent_result_guidance": agent_result_guidance,
             "agent_result_checked_at": str((state or {}).get("agent_result_checked_at") or ""),
             "agent_repair_count": int((state or {}).get("agent_repair_count") or 0),
@@ -2330,6 +2416,7 @@ class AutomationService:
             client = self._build_client(portal)
             return client, self._get_repository_id_cached(portal["repository"], client)
         except Exception:
+            LOGGER.warning("Repository context unavailable for portal %s.", portal.get("repository"), exc_info=True)
             return None, None
 
     def _detect_existing_branch_name(
@@ -2579,6 +2666,7 @@ class AutomationService:
                     effective_branch_name,
                 )
             except Exception:
+                LOGGER.warning("Could not look up an existing PR for branch %s.", effective_branch_name, exc_info=True)
                 existing_pr = None
             if existing_pr:
                 branch_pull_requests[effective_branch_name] = existing_pr
@@ -2969,11 +3057,7 @@ class AutomationService:
         if not raw_context_path:
             raise ServiceError(f"No agent context package has been created for WI {work_item_id}.")
 
-        capture_files = {
-            "summary": {"label": "Summary", "filename": "summary.md", "markdown": True},
-            "instructions": {"label": "Instructions", "filename": "INSTRUCTIONS.md", "markdown": True},
-            "manifest": {"label": "Manifest", "filename": "manifest.json", "markdown": False},
-        }
+        capture_files = DIAGNOSTIC_PACKAGE_FILES
         selected_key = selected_file if selected_file in capture_files else "summary"
         selected_definition = capture_files[selected_key]
 
@@ -2984,13 +3068,16 @@ class AutomationService:
         if not normalized_context_path:
             raise ServiceError(f"The saved context path is not valid for WI {work_item_id}.")
         context_directory = normalized_context_path.rsplit("/", 1)[0]
-        capture_directory = f"{context_directory}/capture"
-        capture_path = f"{capture_directory}/{selected_definition['filename']}"
+        capture_path = _resolve_diagnostic_file_path(context_directory, selected_definition)
         try:
             with execution_runtime_scope(execution_runtime):
                 content = read_wsl_text_file(context_distro, capture_path, max_chars=300000)
+            available = True
         except CopilotIntegrationError as exc:
-            raise ServiceError(str(exc)) from exc
+            if selected_key == "summary":
+                raise ServiceError(str(exc)) from exc
+            content = f"This file is not available for this run.\n\n{exc}"
+            available = False
 
         return {
             "config": config,
@@ -2999,12 +3086,74 @@ class AutomationService:
             "work_item_id": int(work_item_id),
             "selected_file": selected_key,
             "capture_files": capture_files,
-            "capture_directory": capture_directory,
+            "capture_directory": f"{context_directory}/capture",
             "capture_path": capture_path,
             "capture_content": content,
-            "capture_html": render_basic_markdown(content) if selected_definition["markdown"] else "",
-            "is_markdown": bool(selected_definition["markdown"]),
+            "capture_html": render_basic_markdown(content) if selected_definition["markdown"] and available else "",
+            "is_markdown": bool(selected_definition["markdown"]) and available,
         }
+
+    def build_diagnostics_bundle(self, *, portal_name: str, work_item_id: int) -> Tuple[str, bytes]:
+        """Zip the persisted state, event timeline, runner status, and run artifacts for one work item."""
+        config = load_app_config()
+        runtime_settings = load_runtime_settings()
+        portal_names = get_portal_names(config)
+        active_portal_name = portal_name or config["DEFAULT_PORTAL"]
+        if active_portal_name not in portal_names:
+            active_portal_name = config["DEFAULT_PORTAL"]
+        portal = get_portal_config(config, active_portal_name)
+        repository = portal["repository"]
+        state = get_work_item_states(repository, [int(work_item_id)]).get(int(work_item_id))
+        if not state:
+            raise ServiceError(f"No local automation state was found for WI {work_item_id}.")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "bundle.json",
+                json.dumps(
+                    {
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "reference_id": get_reference_id(),
+                        "portal": repository,
+                        "work_item_id": int(work_item_id),
+                        "execution_runtime": str(runtime_settings.get("execution_runtime") or ""),
+                        "copilot_provider": str(runtime_settings.get("copilot_provider") or ""),
+                    },
+                    indent=2,
+                ),
+            )
+            archive.writestr("state.json", json.dumps(dict(state), indent=2, default=str))
+            archive.writestr(
+                "events.json",
+                json.dumps(list_work_item_events(repository, int(work_item_id), limit=500), indent=2, default=str),
+            )
+            archive.writestr("runner-status.json", json.dumps(load_runner_status(), indent=2, default=str))
+
+            raw_context_path = str(state.get("copilot_context_path") or "").strip()
+            if raw_context_path:
+                default_distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip() or "Ubuntu"
+                execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
+                with execution_runtime_scope(execution_runtime):
+                    context_distro, normalized_context_path = normalize_wsl_target_path(raw_context_path, default_distro)
+                context_directory = normalized_context_path.rsplit("/", 1)[0] if normalized_context_path else ""
+                missing: List[str] = []
+                for key, definition in DIAGNOSTIC_PACKAGE_FILES.items():
+                    if not context_directory:
+                        break
+                    file_path = _resolve_diagnostic_file_path(context_directory, definition)
+                    try:
+                        with execution_runtime_scope(execution_runtime):
+                            content = read_wsl_text_file(context_distro, file_path, max_chars=1_000_000)
+                    except CopilotIntegrationError as exc:
+                        missing.append(f"{key}: {file_path} ({exc})")
+                        continue
+                    archive.writestr(f"artifacts/{definition['filename']}", content)
+                if missing:
+                    archive.writestr("artifacts/MISSING.txt", "\n".join(missing) + "\n")
+
+        filename = f"diagnostics-{repository}-wi{int(work_item_id)}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.zip"
+        return filename, buffer.getvalue()
 
     def get_local_status_snapshots(
         self,
@@ -4777,6 +4926,7 @@ class AutomationService:
                 agent_result_status="error",
                 agent_result_path=result_path,
                 agent_result_error=provider_error,
+                agent_result_code="PROVIDER_NO_PROCESS",
             )
             mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
             return {
@@ -4836,6 +4986,7 @@ class AutomationService:
                     agent_result_status="error",
                     agent_result_path=result_path,
                     agent_result_error=provider_error,
+                    agent_result_code="PROVIDER_EXITED",
                 )
                 mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
                 return {
@@ -4855,6 +5006,7 @@ class AutomationService:
                     agent_result_status="waiting",
                     agent_result_path=result_path,
                     agent_result_error=wait_message,
+                    agent_result_code="PROVIDER_WAITING_USER",
                 )
                 return {
                     **result,
@@ -4898,30 +5050,37 @@ class AutomationService:
                 )
 
         repair_reasons: List[str] = []
+        repair_codes: List[str] = []
         if str(result.get("status") or "").strip().lower() != "waiting" and not skip_pipeline_validation:
             result_status = str(result.get("status") or "").strip().lower()
             if result_status == "invalid":
                 repair_reasons.append(str(result.get("error") or "The agent result file is invalid."))
+                repair_codes.append("AGENT_RESULT_INVALID")
             if changed_files and not bool(result.get("green_light")):
                 repair_reasons.append(
                     "The previous agent result reported changed files but did not give green light for push."
                 )
+                repair_codes.append("AGENT_NO_GREEN_LIGHT")
             elif bool(result.get("green_light")) and not changed_files:
                 repair_reasons.append(
                     "The agent result gave green light but did not list any changed files for validation and commit."
                 )
+                repair_codes.append("AGENT_NO_CHANGED_FILES")
             elif not bool(result.get("green_light")) and result_status in {"green", "green_light", "ready", "ready_for_push", "success", "completed"}:
                 repair_reasons.append(
                     "The previous agent result used a completion status but did not give green light for push."
                 )
+                repair_codes.append("AGENT_NO_GREEN_LIGHT")
             if acknowledgement_error:
                 repair_reasons.append(acknowledgement_error)
+                repair_codes.append("AGENT_INSTRUCTIONS_UNCONFIRMED")
             pipeline_validation = result.get("pipeline_validation")
             if isinstance(pipeline_validation, dict) and str(pipeline_validation.get("status") or "").strip().lower() == "failed":
                 repair_reasons.append(
                     "Dashboard preflight validation failed: "
                     + str(pipeline_validation.get("error") or "Unknown validation error.")
                 )
+                repair_codes.append("AGENT_PREFLIGHT_FAILED")
 
         if repair_reasons and bool(current_item.get("auto_flow_enabled")) and self._can_start_agent_repair(current_item):
             repair_reason = "\n".join(repair_reasons)
@@ -4941,6 +5100,9 @@ class AutomationService:
                     agent_result_path=result_path,
                     agent_result_summary=str(result.get("summary") or ""),
                     agent_result_error=f"{repair_reason}\nAutomatic repair could not be launched: {error_message}",
+                    agent_result_code=join_result_codes(
+                        [*repair_codes, getattr(exc, "code", "") or "AGENT_REPAIR_LAUNCH_FAILED"]
+                    ),
                 )
                 mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
                 return {
@@ -4968,6 +5130,7 @@ class AutomationService:
                 agent_result_path=result_path,
                 agent_result_summary=str(result.get("summary") or ""),
                 agent_result_error=error_message,
+                agent_result_code=join_result_codes(repair_codes),
             )
             mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
             return {
@@ -5007,6 +5170,7 @@ class AutomationService:
                     agent_result_path=result_path,
                     agent_result_summary=str(result.get("summary") or ""),
                     agent_result_error=error_message,
+                    agent_result_code=getattr(exc, "code", "") or "AGENT_VALIDATION_FAILED",
                 )
                 mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
                 return {
@@ -5333,11 +5497,13 @@ class AutomationService:
                         if result["status"] != "waiting-for-agent":
                             return
                     except Exception as exc:
+                        LOGGER.error("Automatic flow failed for WI %s: %s", work_item_id, exc, exc_info=True)
                         mark_agent_result(
                             portal=portal_name,
                             work_item_id=work_item_id,
                             agent_result_status="error",
                             agent_result_error=str(exc),
+                            agent_result_code=getattr(exc, "code", "") or "FLOW_EXCEPTION",
                         )
                         mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
                         return
@@ -5347,6 +5513,7 @@ class AutomationService:
                 work_item_id=work_item_id,
                 agent_result_status="error",
                 agent_result_error="Timed out waiting for agent-result.json.",
+                agent_result_code="AGENT_RESULT_TIMEOUT",
             )
             mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
         finally:

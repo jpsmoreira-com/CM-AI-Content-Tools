@@ -828,7 +828,7 @@ Order By [System.ChangedDate] Desc
         parent_ids: List[int] = []
         rows_by_id: Dict[int, Dict[str, Any]] = {}
         for row in full_rows:
-            if not row.get("id"):
+            if not row or not row.get("id"):
                 continue
             rows_by_id[int(row["id"])] = row
 

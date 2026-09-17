@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from .config import DB_PATH
+from .diagnostics import get_logger, get_reference_id
+
+
+LOGGER = get_logger("events")
+_EVENT_LOG_LEVELS = {"error": logging.ERROR, "warning": logging.WARNING}
 
 
 @contextmanager
@@ -102,6 +108,7 @@ def init_storage() -> None:
         _ensure_column(connection, "work_item_state", "auto_flow_enabled", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(connection, "work_item_state", "auto_flow_runtime_status", "TEXT")
         _ensure_column(connection, "work_item_state", "auto_flow_runtime_message", "TEXT")
+        _ensure_column(connection, "work_item_state", "agent_result_code", "TEXT")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS work_item_events (
@@ -118,10 +125,28 @@ def init_storage() -> None:
             )
             """
         )
+        _ensure_column(connection, "work_item_events", "reference_id", "TEXT")
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_work_item_events_lookup
             ON work_item_events (portal, work_item_id, created_at DESC, id DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runner_status (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                running INTEGER NOT NULL DEFAULT 0,
+                last_reconcile_at TEXT,
+                last_discovery_at TEXT,
+                last_reconcile_count INTEGER NOT NULL DEFAULT 0,
+                last_discovery_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                last_error_at TEXT,
+                last_error_reference_id TEXT,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
             """
         )
 
@@ -164,6 +189,11 @@ def _insert_work_item_event(
     metadata: Optional[Dict[str, Any]] = None,
     created_at: Optional[str] = None,
 ) -> None:
+    clean_stage = str(stage or "").strip() or "Automation"
+    clean_status = str(status or "").strip() or "-"
+    clean_level = str(level or "").strip() or "info"
+    clean_message = str(message or "").strip()[:4000]
+    reference_id = get_reference_id()
     connection.execute(
         """
         INSERT INTO work_item_events (
@@ -175,21 +205,32 @@ def _insert_work_item_event(
             level,
             message,
             metadata_json,
-            created_at
+            created_at,
+            reference_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             portal,
             int(work_item_id),
             str(event_type or "").strip() or "event",
-            str(stage or "").strip() or "Automation",
-            str(status or "").strip() or "-",
-            str(level or "").strip() or "info",
-            str(message or "").strip()[:4000],
+            clean_stage,
+            clean_status,
+            clean_level,
+            clean_message,
             _normalize_event_metadata(metadata),
             created_at or utc_now(),
+            reference_id,
         ),
+    )
+    LOGGER.log(
+        _EVENT_LOG_LEVELS.get(clean_level, logging.INFO),
+        "portal=%s wi=%s stage=%s status=%s: %s",
+        portal,
+        int(work_item_id),
+        clean_stage,
+        clean_status,
+        clean_message.replace("\n", " | "),
     )
 
 
@@ -953,6 +994,7 @@ def mark_agent_result(
     agent_result_path: str = "",
     agent_result_summary: str = "",
     agent_result_error: str = "",
+    agent_result_code: str = "",
 ) -> None:
     timestamp = utc_now()
     with connect() as connection:
@@ -963,6 +1005,7 @@ def mark_agent_result(
                 agent_result_path = CASE WHEN ? != '' THEN ? ELSE agent_result_path END,
                 agent_result_summary = CASE WHEN ? != '' THEN ? ELSE agent_result_summary END,
                 agent_result_error = ?,
+                agent_result_code = ?,
                 agent_result_checked_at = ?,
                 updated_at = ?
             WHERE portal = ?
@@ -975,6 +1018,7 @@ def mark_agent_result(
                 agent_result_summary,
                 agent_result_summary,
                 agent_result_error,
+                str(agent_result_code or "").strip(),
                 timestamp,
                 timestamp,
                 portal,
@@ -1003,9 +1047,57 @@ def mark_agent_result(
                 "agent_result_path": agent_result_path,
                 "summary": agent_result_summary,
                 "error": agent_result_error,
+                "code": str(agent_result_code or "").strip(),
             },
             created_at=timestamp,
         )
+
+
+def save_runner_status(status: Dict[str, Any]) -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO runner_status (
+                id, running, last_reconcile_at, last_discovery_at, last_reconcile_count,
+                last_discovery_count, last_error, last_error_at, last_error_reference_id,
+                consecutive_failures, updated_at
+            )
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                running = excluded.running,
+                last_reconcile_at = excluded.last_reconcile_at,
+                last_discovery_at = excluded.last_discovery_at,
+                last_reconcile_count = excluded.last_reconcile_count,
+                last_discovery_count = excluded.last_discovery_count,
+                last_error = excluded.last_error,
+                last_error_at = excluded.last_error_at,
+                last_error_reference_id = excluded.last_error_reference_id,
+                consecutive_failures = excluded.consecutive_failures,
+                updated_at = excluded.updated_at
+            """,
+            (
+                1 if status.get("running") else 0,
+                str(status.get("last_reconcile_at") or ""),
+                str(status.get("last_discovery_at") or ""),
+                int(status.get("last_reconcile_count") or 0),
+                int(status.get("last_discovery_count") or 0),
+                str(status.get("last_error") or "")[:4000],
+                str(status.get("last_error_at") or ""),
+                str(status.get("last_error_reference_id") or ""),
+                int(status.get("consecutive_failures") or 0),
+                utc_now(),
+            ),
+        )
+
+
+def load_runner_status() -> Dict[str, Any]:
+    with connect() as connection:
+        row = connection.execute("SELECT * FROM runner_status WHERE id = 1").fetchone()
+    if not row:
+        return {}
+    status = {key: row[key] for key in row.keys()}
+    status["running"] = bool(status.get("running"))
+    return status
 
 
 def mark_push_result(
