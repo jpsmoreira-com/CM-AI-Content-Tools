@@ -50,6 +50,7 @@ from .config import (
     COPILOT_VSCODE_WINDOW_MODE_OPTIONS,
     DATA_DIR,
     EXECUTION_RUNTIME_OPTIONS,
+    WORKSPACE_ROOT,
     get_persisted_settings_file,
     get_portal_config,
     get_portal_names,
@@ -717,7 +718,8 @@ def _check_git_credentials_for_portal(portal: Dict[str, Any]) -> Dict[str, Any]:
                 detail = (
                     f"The configured workspace '{workspace_path}' is not a valid Git repository inside the "
                     "current devcontainer. If this workspace is a linked Git worktree, rebuild/reopen the "
-                    "devcontainer with the WSL /workspaces folder mounted so the shared .git metadata is visible."
+                    "devcontainer with the WSL folder that contains your repositories mounted so the shared "
+                    ".git metadata is visible."
                 )
             return {
                 "status": "error",
@@ -1584,11 +1586,12 @@ class AutomationService:
         current_path = str(portal.get("copilot_workspace_path") or "").strip().rstrip("/")
         scan_roots: List[str] = []
 
-        for candidate in ["/app", current_path, "/workspaces"]:
+        workspace_root = str(WORKSPACE_ROOT).rstrip("/")
+        for candidate in ["/app", current_path, workspace_root]:
             clean_candidate = str(candidate or "").strip().rstrip("/")
             if not clean_candidate:
                 continue
-            if clean_candidate in {"/app", "/workspaces"}:
+            if clean_candidate in {"/app", workspace_root}:
                 scan_roots.append(clean_candidate)
                 continue
             parent = str(Path(clean_candidate).parent) if clean_candidate.startswith("/") else clean_candidate
@@ -4430,7 +4433,7 @@ class AutomationService:
                     root_mode=str(runtime_settings.get("context_capture_root_mode") or "parent"),
                     include_pr_diffs=bool(runtime_settings.get("context_capture_include_pr_diffs")),
                     max_tree_items=int(runtime_settings.get("context_capture_max_tree_items") or 50),
-                    workspace_scan_roots=list(runtime_settings.get("context_capture_workspace_scan_roots") or ["/workspaces"]),
+                    workspace_scan_roots=list(runtime_settings.get("context_capture_workspace_scan_roots") or [str(WORKSPACE_ROOT)]),
                     execution_runtime=execution_runtime,
                 )
             except Exception as exc:

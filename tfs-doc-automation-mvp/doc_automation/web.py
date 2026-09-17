@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .config import DEFAULT_RUNTIME_SETTINGS
 from .orchestrator import AutomationOrchestrator
 from .services import AutomationService, ServiceError
 from .tfs_client import TfsApiError
@@ -643,7 +644,7 @@ def save_runtime_settings(
     copilot_cli_command_template: str = Form(""),
     final_reports_path: str = Form(""),
     copilot_desktop_url: str = Form("https://m365.cloud.microsoft/chat"),
-    copilot_reference_docs_path: str = Form("/workspaces/Documentation"),
+    copilot_reference_docs_path: str = Form(DEFAULT_RUNTIME_SETTINGS["copilot_reference_docs_path"]),
     copilot_strict_model_safety: bool = Form(False),
     copilot_open_wsl_remote: bool = Form(False),
     copilot_vscode_window_mode: str = Form("new"),
@@ -657,7 +658,9 @@ def save_runtime_settings(
     context_capture_root_mode: str = Form("parent"),
     context_capture_max_tree_items: int = Form(50),
     context_capture_include_pr_diffs: bool = Form(False),
-    context_capture_workspace_scan_roots_text: str = Form("/workspaces"),
+    context_capture_workspace_scan_roots_text: str = Form(
+        "\n".join(DEFAULT_RUNTIME_SETTINGS["context_capture_workspace_scan_roots"])
+    ),
     default_reviewer_display_name: str = Form(""),
     default_reviewer_unique_name: str = Form(""),
     default_reviewer_id: str = Form(""),

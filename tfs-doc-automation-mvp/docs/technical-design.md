@@ -372,7 +372,7 @@ Suggested gates:
 
 Runtime settings are stored in a local `.env` file and edited through the dashboard.
 
-When `CONTENT_AI_SETTINGS_PATH` is configured, the dashboard mirrors `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror into that persistent folder and restores them when a fresh central checkout is created. Target devcontainers should bind-mount the WSL host `/workspaces` folder into the container, keep the central tool checkout at `/workspaces/CM-AI-Content-Tools` and the shared-assets checkout at `/workspaces/CM-AI-Content-Skills`, keep persistent settings at `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`, and keep the active target repository mounted separately at `/app`. Mounting the full `/workspaces` tree also keeps Git worktree metadata visible when `/app/.git` points to a shared Git directory outside the opened worktree.
+When `CONTENT_AI_SETTINGS_PATH` is configured, the dashboard mirrors `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror into that persistent folder and restores them when a fresh central checkout is created. Target devcontainers should bind-mount the WSL host folder that contains the repositories (conventionally `/workspaces`, but any path works) into the container, keep the central tool checkout at `<repos-parent>/CM-AI-Content-Tools` and the shared-assets checkout at `<repos-parent>/CM-AI-Content-Skills`, keep persistent settings at `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`, and keep the active target repository mounted separately at `/app`. Mounting the full repositories tree also keeps Git worktree metadata visible when `/app/.git` points to a shared Git directory outside the opened worktree.
 
 For portals that use `Git Credentials`, the dashboard writes credentials through `git credential approve`, forces the devcontainer Git helper to `store`, mirrors `~/.git-credentials` to `CONTENT_AI_SETTINGS_PATH/git-credentials`, and restores that file before credential preflight or bootstrap Git operations. This keeps the one-click setup usable after devcontainer rebuilds without storing secrets in the project repository or `.env`. Git author name and email remain a separate preflight requirement before the dashboard can create its commit.
 
@@ -401,7 +401,7 @@ The sync process copies the managed root `AGENTS.md` into the target repository 
 
 Managed shared assets also live in the namespaced `.agents/content-ai/` folder and are referenced by the generated context package and prompts.
 
-The sync source is the centralized `CM-AI-Content-Skills` checkout (`CONTENT_AI_REPO_PATH`, default `/workspaces/CM-AI-Content-Skills`), a sibling of the `CM-AI-Content-Tools` checkout that contains this pipeline:
+The sync source is the centralized `CM-AI-Content-Skills` checkout (`CONTENT_AI_REPO_PATH`, default `$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Skills`, a sibling of the `CM-AI-Content-Tools` checkout that contains this pipeline):
 
 ```text
 instructions/AGENTS.md

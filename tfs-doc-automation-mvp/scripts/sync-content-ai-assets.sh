@@ -3,8 +3,14 @@ set -euo pipefail
 
 TARGET_WORKSPACE="${1:-${CONTENT_AI_TARGET_WORKSPACE:-$PWD}}"
 # Shared assets (skills, subagents, managed rules) come from the sibling
-# CM-AI-Content-Skills checkout, not from this repository.
-CONTENT_AI_ROOT="${CONTENT_AI_REPO_PATH:-/workspaces/CM-AI-Content-Skills}"
+# CM-AI-Content-Skills checkout, not from this repository. All repositories are
+# assumed to share one parent folder, provided via CONTENT_AI_WORKSPACE_ROOT;
+# when the variable is not set, a warning is logged and /workspaces is used.
+if [ -z "${CONTENT_AI_WORKSPACE_ROOT:-}" ]; then
+  echo "[sync-content-ai-assets][warning] CONTENT_AI_WORKSPACE_ROOT is not set; defaulting the repositories parent folder to /workspaces." >&2
+  CONTENT_AI_WORKSPACE_ROOT="/workspaces"
+fi
+CONTENT_AI_ROOT="${CONTENT_AI_REPO_PATH:-$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Skills}"
 DESTINATION="$TARGET_WORKSPACE/.agents/content-ai"
 TMP_DESTINATION="$TARGET_WORKSPACE/.agents/.content-ai.tmp"
 SYNC_ROOT_AGENTS="${CONTENT_AI_SYNC_ROOT_AGENTS:-true}"

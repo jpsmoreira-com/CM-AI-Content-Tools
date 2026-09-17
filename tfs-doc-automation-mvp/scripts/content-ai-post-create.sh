@@ -20,13 +20,26 @@ TARGET_WORKSPACE="$(cd "$TARGET_WORKSPACE" && pwd)"
 
 # Two checkouts: this tools repository (the pipeline itself) and the shared-assets
 # repository (skills, subagents, managed rules) that the pipeline syncs into portals.
-CONTENT_AI_TOOLS_IMAGE_REPO_PATH="${CONTENT_AI_TOOLS_IMAGE_REPO_PATH:-/opt/content-ai/CM-AI-Content-Tools}"
-CONTENT_AI_TOOLS_REPO_PATH="${CONTENT_AI_TOOLS_REPO_PATH:-/workspaces/CM-AI-Content-Tools}"
+# The image seed copies default to the tools copy this script ships in (the script
+# lives at <tools-copy>/tfs-doc-automation-mvp/scripts/, resolved through the
+# /usr/local/bin symlink). The writable runtime copies live under one shared parent
+# folder, provided via CONTENT_AI_WORKSPACE_ROOT; when the variable is not set, a
+# warning is logged and /workspaces is used as default.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]:-$0}")")" && pwd)"
+SCRIPT_TOOLS_COPY="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CONTENT_AI_TOOLS_IMAGE_REPO_PATH="${CONTENT_AI_TOOLS_IMAGE_REPO_PATH:-$SCRIPT_TOOLS_COPY}"
+CONTENT_AI_IMAGE_REPO_PATH="${CONTENT_AI_IMAGE_REPO_PATH:-$(dirname "$SCRIPT_TOOLS_COPY")/CM-AI-Content-Skills}"
+
+if [ -z "${CONTENT_AI_WORKSPACE_ROOT:-}" ]; then
+  echo "[content-ai-post-create][warning] CONTENT_AI_WORKSPACE_ROOT is not set; defaulting the repositories parent folder to /workspaces." >&2
+  CONTENT_AI_WORKSPACE_ROOT="/workspaces"
+fi
+
+CONTENT_AI_TOOLS_REPO_PATH="${CONTENT_AI_TOOLS_REPO_PATH:-$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Tools}"
 CONTENT_AI_TOOLS_BRANCH="${CONTENT_AI_TOOLS_BRANCH:-main}"
-CONTENT_AI_IMAGE_REPO_PATH="${CONTENT_AI_IMAGE_REPO_PATH:-/opt/content-ai/CM-AI-Content-Skills}"
-CONTENT_AI_REPO_PATH="${CONTENT_AI_REPO_PATH:-/workspaces/CM-AI-Content-Skills}"
+CONTENT_AI_REPO_PATH="${CONTENT_AI_REPO_PATH:-$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Skills}"
 CONTENT_AI_BRANCH="${CONTENT_AI_BRANCH:-main}"
-CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-/workspaces/.content-ai-settings/tfs-doc-automation-mvp}"
+CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_WORKSPACE_ROOT/.content-ai-settings/tfs-doc-automation-mvp}"
 CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturing.com}"
 CONTENT_AI_MARKDOWNLINT_IMAGE="${CONTENT_AI_MARKDOWNLINT_IMAGE:-proxy.criticalmanufacturing.io/davidanson/markdownlint-cli2:v0.12.1}"
 CONTENT_AI_PREPULL_MARKDOWNLINT_IMAGE="${CONTENT_AI_PREPULL_MARKDOWNLINT_IMAGE:-true}"

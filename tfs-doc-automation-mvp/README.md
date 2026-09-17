@@ -176,7 +176,7 @@ The current handoff also:
 - lists work item attachment links, hyperlink relations, image sources found in the work item HTML, and referenced `.docx` files;
 - creates a reference-documentation package for detected specification names so the agent can read `reference-docs/index.md` and packaged text extracts before reporting that a spec could not be found;
 - serves protected TFS image attachments through the local `/tfs-assets` proxy so the dashboard can render images with the configured TFS credentials;
-- can point CM GPT to a shared reference documentation workspace, for example `/workspaces/Documentation`.
+- can point CM GPT to a shared reference documentation workspace (default: a `Documentation` folder next to the repository checkouts).
 
 Context capture can be configured from `Settings > Automation`:
 
@@ -220,12 +220,12 @@ Target repositories can install the pipeline and managed Content AI assets from 
 CONTENT_AI_TOOLS_REPO_URL=<CM-AI-Content-Tools repo url> \
 CONTENT_AI_REPO_URL=<CM-AI-Content-Skills repo url> \
 CONTENT_AI_TARGET_WORKSPACE="$PWD" \
-bash /workspaces/CM-AI-Content-Tools/tfs-doc-automation-mvp/scripts/devcontainer-bootstrap.sh
+bash <repos-parent>/CM-AI-Content-Tools/tfs-doc-automation-mvp/scripts/devcontainer-bootstrap.sh
 ```
 
 The URLs are only needed when the corresponding checkout does not exist yet; an existing checkout is fast-forwarded instead.
 
-The recommended devcontainer layout keeps the target repository mounted at `/app`, bind-mounts the WSL host `/workspaces` folder into the container, keeps the central tool checkout at `/workspaces/CM-AI-Content-Tools` and the shared-assets checkout at `/workspaces/CM-AI-Content-Skills`, and keeps persistent local settings under `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`. This avoids cloning the tool into the target repository or into an ephemeral container-only folder, and it keeps Git worktree metadata visible when the target workspace is opened from a linked worktree.
+The recommended devcontainer layout keeps the target repository mounted at `/app`, bind-mounts the WSL host folder that contains the repositories (conventionally `/workspaces`, but any path works) into the container, keeps the central tool checkout at `<repos-parent>/CM-AI-Content-Tools` and the shared-assets checkout at `<repos-parent>/CM-AI-Content-Skills`, and keeps persistent local settings under `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`. This avoids cloning the tool into the target repository or into an ephemeral container-only folder, and it keeps Git worktree metadata visible when the target workspace is opened from a linked worktree.
 
 For Git Credentials authentication inside a devcontainer, provide one of these optional bootstrap inputs before rebuild:
 
@@ -234,7 +234,7 @@ For Git Credentials authentication inside a devcontainer, provide one of these o
 - `CONTENT_AI_TFS_HOST`, when the TFS host is different from `tfs-product.cmf.criticalmanufacturing.com`.
 - `CONTENT_AI_TFS_VERIFY_SSL`, when the devcontainer should override the default internal setting for TFS SSL verification;
 - `CONTENT_AI_TFS_CA_BUNDLE_PATH`, when the devcontainer has a mounted corporate CA bundle that Python `requests` should trust.
-- `CONTENT_AI_SETTINGS_PATH`, when the devcontainer should persist `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror somewhere other than `/workspaces/.content-ai-settings/tfs-doc-automation-mvp`.
+- `CONTENT_AI_SETTINGS_PATH`, when the devcontainer should persist `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror somewhere other than the default `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`.
 - `CONTENT_AI_AUTO_STASH_ON_UPDATE=false`, when DevContainer setup should stop and ask for manual review instead of auto-stashing local tool changes before refreshing the centralized runtime copy.
 
 If those inputs are not configured, open `Settings > Connection` after the dashboard starts and use `TFS Git Credentials Setup`. That setup writes the provided username and token/password through `git credential approve` into the devcontainer user's Git credential store, mirrors the store to `CONTENT_AI_SETTINGS_PATH/git-credentials`, then validates both dashboard credential lookup and `git ls-remote --heads origin`. Host Windows/GCM credentials are not assumed to be available inside Linux containers.
@@ -251,7 +251,7 @@ The bootstrap:
 - creates local runtime files for the target devcontainer, including `.env` and `config/tfs_dashboard.local.json`;
 - restores those local runtime files from `CONTENT_AI_SETTINGS_PATH` when available, then mirrors dashboard saves back to that folder;
 - points the active portal workspace to the target repository workspace, normally `/app` when the devcontainer mounts the repository there;
-- keeps the tool checkout at `CONTENT_AI_TOOLS_REPO_PATH` (default `/workspaces/CM-AI-Content-Tools`) and the shared-assets checkout at `CONTENT_AI_REPO_PATH` (default `/workspaces/CM-AI-Content-Skills`);
+- keeps the tool checkout at `CONTENT_AI_TOOLS_REPO_PATH` (default `<repos-parent>/CM-AI-Content-Tools`) and the shared-assets checkout at `CONTENT_AI_REPO_PATH` (default `<repos-parent>/CM-AI-Content-Skills`), where `<repos-parent>` is `CONTENT_AI_WORKSPACE_ROOT` (a warning is logged and `/workspaces` is used when the variable is not set);
 - syncs managed AI assets into the target repository under `.agents/content-ai/`;
 - copies the managed root `AGENTS.md` into the target repository root so editor agents can discover the shared instructions immediately;
 - installs the shared skills and subagents with `@sentry/dotagents` into `.agents/skills/` and the tool-native folders (`.claude/skills`, `.claude/agents`, `.codex/`), honoring a committed portal `agents.toml` or generating a git-excluded one wired to the synced `.agents/content-ai/` copy.

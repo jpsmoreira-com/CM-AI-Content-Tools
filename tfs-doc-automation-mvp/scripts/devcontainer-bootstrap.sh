@@ -4,10 +4,17 @@ set -euo pipefail
 TARGET_WORKSPACE="${CONTENT_AI_TARGET_WORKSPACE:-$PWD}"
 # Two checkouts: this tools repository (the pipeline itself) and the shared-assets
 # repository (skills, subagents, managed rules) that the pipeline syncs into portals.
-CONTENT_AI_TOOLS_REPO_PATH="${CONTENT_AI_TOOLS_REPO_PATH:-/workspaces/CM-AI-Content-Tools}"
+# Both are assumed to live under one shared parent folder, provided via
+# CONTENT_AI_WORKSPACE_ROOT; when the variable is not set, a warning is logged
+# and /workspaces is used as default.
+if [ -z "${CONTENT_AI_WORKSPACE_ROOT:-}" ]; then
+  echo "[devcontainer-bootstrap][warning] CONTENT_AI_WORKSPACE_ROOT is not set; defaulting the repositories parent folder to /workspaces." >&2
+  CONTENT_AI_WORKSPACE_ROOT="/workspaces"
+fi
+CONTENT_AI_TOOLS_REPO_PATH="${CONTENT_AI_TOOLS_REPO_PATH:-$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Tools}"
 CONTENT_AI_TOOLS_REPO_URL="${CONTENT_AI_TOOLS_REPO_URL:-}"
 CONTENT_AI_TOOLS_BRANCH="${CONTENT_AI_TOOLS_BRANCH:-main}"
-CONTENT_AI_REPO_PATH="${CONTENT_AI_REPO_PATH:-/workspaces/CM-AI-Content-Skills}"
+CONTENT_AI_REPO_PATH="${CONTENT_AI_REPO_PATH:-$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Skills}"
 CONTENT_AI_REPO_URL="${CONTENT_AI_REPO_URL:-}"
 CONTENT_AI_BRANCH="${CONTENT_AI_BRANCH:-main}"
 CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturing.com}"
@@ -15,7 +22,7 @@ CONTENT_AI_AUTO_STASH_ON_UPDATE="${CONTENT_AI_AUTO_STASH_ON_UPDATE:-true}"
 PIPELINE_PROJECT_PATH="$CONTENT_AI_TOOLS_REPO_PATH/tfs-doc-automation-mvp"
 PIPELINE_VENV="${TFS_AUTONOMOUS_PIPELINE_VENV:-$HOME/.venvs/tfs-doc-automation-mvp}"
 PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7001}"
-CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-/workspaces/.content-ai-settings/tfs-doc-automation-mvp}"
+CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_WORKSPACE_ROOT/.content-ai-settings/tfs-doc-automation-mvp}"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
 export CODEX_HOME

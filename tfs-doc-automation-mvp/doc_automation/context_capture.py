@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlencode
 
+from .config import WORKSPACE_ROOT
 from .tfs_client import (
     TfsApiError,
     TfsClient,
@@ -476,7 +477,7 @@ def list_candidate_repo_paths(
     execution_runtime: str = EXECUTION_RUNTIME_DEVCONTAINER,
 ) -> List[str]:
     candidates: List[str] = []
-    for candidate in [workspace_path, f"/workspaces/{repo_name}"]:
+    for candidate in [workspace_path, str(WORKSPACE_ROOT / repo_name)]:
         value = str(candidate or "").strip()
         if value and value not in candidates:
             candidates.append(value)
@@ -973,7 +974,7 @@ def build_context_capture_package(
         return build_capture_error_package(item, "No root work item id was available for capture.")
 
     errors: List[str] = []
-    scan_roots = workspace_scan_roots or ["/workspaces"]
+    scan_roots = workspace_scan_roots or [str(WORKSPACE_ROOT)]
     items = walk_work_item_tree(client, root_id, max_items=max_tree_items, errors=errors)
     if not items:
         return build_capture_error_package(item, f"Root work item {root_id} could not be loaded.")

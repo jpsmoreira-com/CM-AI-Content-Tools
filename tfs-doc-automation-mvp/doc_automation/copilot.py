@@ -24,7 +24,11 @@ DOCX_RE = re.compile(r"\b[^\\/\s<>:\"|?*]+\.(?:docx|docm|doc)\b", re.IGNORECASE)
 IMG_SRC_RE = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
 CUSTOM_AGENT_FILE_BASENAME = "cmf-tfs-doc-automation"
 WORKSPACE_CONTEXT_ROOT = ".automation-context/copilot"
-ISOLATED_WORKTREE_ROOT = "/workspaces/.content-ai-worktrees"
+# Isolated agent worktrees live next to the source repository, under a
+# dedicated folder in the repositories' shared parent (any path, not a fixed
+# mount such as /workspaces). The concrete root is resolved at runtime from the
+# source repository's location.
+ISOLATED_WORKTREE_DIRNAME = ".content-ai-worktrees"
 VSCODE_BRIDGE_STATUS_FILE = "bridge-status.json"
 EXECUTION_RUNTIME_DEVCONTAINER = "devcontainer"
 EXECUTION_RUNTIME_WINDOWS_HOST = "windows_host"
@@ -1527,7 +1531,7 @@ def _prepare_isolated_agent_worktree(
             'repository_root="$(git -C \"$source_path\" rev-parse --show-toplevel)"',
             'repository_name="$(basename \"$repository_root\")"',
             'branch_slug="$(printf %s \"$branch_name\" | tr "/\\\\ :" "----" | tr -cs "[:alnum:]._-" "-")"',
-            f'worktree_root="{ISOLATED_WORKTREE_ROOT}/$repository_name"',
+            f'worktree_root="$(dirname "$repository_root")/{ISOLATED_WORKTREE_DIRNAME}/$repository_name"',
             'target_path="$worktree_root/$branch_slug"',
             'if [ -d "$target_path" ]; then',
             '  git -C "$target_path" rev-parse --is-inside-work-tree >/dev/null',
@@ -1567,8 +1571,8 @@ def _prepare_isolated_agent_worktree(
 def remove_isolated_agent_worktree(distro: str, workspace_path: str) -> Dict[str, str]:
     """Remove a completed pipeline worktree without touching a configured workspace."""
     clean_workspace_path = str(workspace_path or "").strip().replace("\\", "/").rstrip("/")
-    worktree_root = ISOLATED_WORKTREE_ROOT.rstrip("/")
-    if not clean_workspace_path.startswith(worktree_root + "/"):
+    path_segments = clean_workspace_path.split("/")
+    if ISOLATED_WORKTREE_DIRNAME not in path_segments[:-1]:
         return {"status": "skipped", "message": "Workspace is not owned by the automation worktree root."}
 
     script = "\n".join(

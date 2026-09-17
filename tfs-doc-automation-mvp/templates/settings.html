@@ -438,7 +438,7 @@
                         </label>
                         <label class="full-width">
                             <span>Reference Documentation Workspace Path</span>
-                            <input type="text" name="copilot_reference_docs_path" value="{{ runtime_settings.copilot_reference_docs_path }}" placeholder="/workspaces/Documentation">
+                            <input type="text" name="copilot_reference_docs_path" value="{{ runtime_settings.copilot_reference_docs_path }}" placeholder="/path/to/repos-parent/Documentation">
                         </label>
                         <label class="full-width">
                             <span>Final Reports Path</span>
@@ -496,7 +496,7 @@
                         <textarea
                             name="context_capture_workspace_scan_roots_text"
                             rows="4"
-                            placeholder="One path per line. Example: /workspaces"
+                            placeholder="One path per line. Example: the parent folder that holds your repositories"
                         >{{ runtime_settings.context_capture_workspace_scan_roots_text }}</textarea>
                     </label>
                     {% if runtime_settings.context_capture_workspace_scan_roots_error %}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -9,6 +10,16 @@ from urllib.parse import unquote, urlparse
 
 
 APP_DIR = Path(__file__).resolve().parent.parent
+# The tools repository and its sibling repositories (target portals, the
+# CM-AI-Content-Skills checkout, reference documentation) share one parent
+# folder. That folder is provided via CONTENT_AI_WORKSPACE_ROOT; when the
+# variable is not set, a warning is logged and /workspaces is used as default.
+_workspace_root_env = os.environ.get("CONTENT_AI_WORKSPACE_ROOT", "").strip()
+if not _workspace_root_env:
+    logging.getLogger(__name__).warning(
+        "CONTENT_AI_WORKSPACE_ROOT is not set; defaulting the repositories parent folder to /workspaces."
+    )
+WORKSPACE_ROOT = Path(_workspace_root_env or "/workspaces")
 CONFIG_PATH = APP_DIR / "config" / "tfs_dashboard.json"
 LOCAL_CONFIG_PATH = APP_DIR / "config" / "tfs_dashboard.local.json"
 DATA_DIR = APP_DIR / "data"
@@ -97,7 +108,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "copilot_cli_command_template": "",
     "final_reports_path": str(DATA_DIR / "reports"),
     "copilot_desktop_url": "https://m365.cloud.microsoft/chat",
-    "copilot_reference_docs_path": "/workspaces/Documentation",
+    "copilot_reference_docs_path": str(WORKSPACE_ROOT / "Documentation"),
     "copilot_strict_model_safety": False,
     "copilot_open_wsl_remote": True,
     "copilot_vscode_window_mode": "new",
@@ -111,7 +122,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "context_capture_root_mode": "parent",
     "context_capture_max_tree_items": 50,
     "context_capture_include_pr_diffs": True,
-    "context_capture_workspace_scan_roots": ["/workspaces"],
+    "context_capture_workspace_scan_roots": [str(WORKSPACE_ROOT)],
     "default_reviewer_display_name": "",
     "default_reviewer_unique_name": "",
     "default_reviewer_id": "",
