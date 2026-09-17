@@ -13,7 +13,7 @@ This repository is the companion of [CM-AI-Content-Skills](https://github.com/us
 ## Conventions
 
 - One top-level folder per tool. Each tool is self-contained: its own `README.md`, dependencies, scripts, docs, and local `.gitignore`.
-- Tools consume the shared assets from a sibling `CM-AI-Content-Skills` checkout (by default next to this repository, overridable with `CONTENT_AI_REPO_PATH`). Never copy skills, subagents, or the managed `AGENTS.md` block into this repository.
+- Tools consume the shared assets from a sibling `CM-AI-Content-Skills` checkout (by default next to this repository, overridable with `CONTENT_AI_REPO_PATH`), installed into portals with APM as that repository prescribes. Never copy skills, subagents, or instruction blocks into this repository or distribute them by another path.
 - Persistent, non-Git tool settings live outside the checkout, under `<repos-parent>/.content-ai-settings/<tool>/`.
 - All documentation, README files, and code comments are written in English.
 - Tools that agents work on keep their own `.agents/memory.md` project memory.

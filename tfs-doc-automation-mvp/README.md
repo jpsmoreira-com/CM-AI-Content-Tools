@@ -258,23 +258,15 @@ The bootstrap:
 - restores those local runtime files from `CONTENT_AI_SETTINGS_PATH` when available, then mirrors dashboard saves back to that folder;
 - points the active portal workspace to the target repository workspace, normally `/app` when the devcontainer mounts the repository there;
 - keeps the tool checkout at `CONTENT_AI_TOOLS_REPO_PATH` (default `<repos-parent>/CM-AI-Content-Tools`) and the shared-assets checkout at `CONTENT_AI_REPO_PATH` (default `<repos-parent>/CM-AI-Content-Skills`), where `<repos-parent>` is `CONTENT_AI_WORKSPACE_ROOT` (a warning is logged and `/workspaces` is used when the variable is not set);
-- syncs managed AI assets into the target repository under `.agents/content-ai/`;
-- copies the managed root `AGENTS.md` into the target repository root so editor agents can discover the shared instructions immediately;
-- installs the shared skills and subagents with `@sentry/dotagents` into `.agents/skills/` and the tool-native folders (`.claude/skills`, `.claude/agents`, `.codex/`), honoring a committed portal `agents.toml` or generating a git-excluded one wired to the synced `.agents/content-ai/` copy.
+- installs the shared Content AI assets into the target repository with [APM](https://github.com/microsoft/apm), the only distribution path `CM-AI-Content-Skills` supports: skills to `.agents/skills/` and `.claude/skills/`, subagents to `.github/agents/`, `.claude/agents/` and `.codex/agents/`, and the always-on guardrails to `.github/instructions/` and `.claude/rules/`, compiled into `AGENTS.md` and `.github/copilot-instructions.md`.
 
-Managed assets are copied from the `CM-AI-Content-Skills` checkout root (`CONTENT_AI_REPO_PATH`):
+How the assets are installed (`scripts/sync-content-ai-assets.sh`, also available as `tfs-autonomous-pipeline sync-assets`):
 
-- `instructions/AGENTS.md`, with fallback to root `AGENTS.md` if a custom asset repository does not provide the managed target baseline;
-- `manifest.json`;
-- `skills/`;
-- `agents/`;
-- `instructions/`.
-
-By default, the sync script overwrites the target repository root `AGENTS.md` with the managed Content AI version and keeps a copy under `.agents/content-ai/AGENTS.md`. This makes the shared instructions visible to editor agents that only discover root-level instruction files. Set `CONTENT_AI_SYNC_ROOT_AGENTS=false` before running the bootstrap if a repository must keep its own root `AGENTS.md`.
-
-Set `CONTENT_AI_DOTAGENTS=false` to skip the dotagents step; agents then fall back to the skills under `.agents/content-ai/skills/`. `CONTENT_AI_DOTAGENTS_VERSION` pins the `@sentry/dotagents` version run through `npx` (default `3.0.1`).
-
-The managed `.agents/` folder (including the dotagents state and a generated `agents.toml`) and the tool-native skill folders are added to the local `.git/info/exclude` file. The root `AGENTS.md` is also locally excluded when it is untracked. If a target repository already tracks `AGENTS.md`, the sync marks it `skip-worktree` after writing the managed file so the bootstrap does not leave the repository dirty and block automation safety checks.
+- the pinned APM CLI (`CONTENT_AI_APM_VERSION`, default `v0.31.0`) is installed into `~/.local/bin` when missing (`CONTENT_AI_APM_INSTALL_CLI=false` disables that and fails instead);
+- a portal that commits its own `apm.yml` is honored as-is: `apm install --frozen` when `apm.lock.yaml` exists (falling back to `apm install` if the lockfile is stale), then `apm compile`. The deployed tree is the portal's to commit, exactly as described in the `CM-AI-Content-Skills` consuming guide;
+- a portal without `apm.yml` gets a generated, git-excluded manifest whose single dependency is the local `CM-AI-Content-Skills` checkout (`CONTENT_AI_REPO_PATH`), or the published pin given in `CONTENT_AI_APM_DEPENDENCY` (for example `jpsmoreira-com/CM-AI-Content-Skills#v1.0.0`). Everything APM writes, plus an untracked compiled `AGENTS.md`, is added to `.git/info/exclude`, and the `apm_modules/` line APM appends to `.gitignore` is reverted so the portal stays clean;
+- leftovers of the previous contract (`.agents/content-ai/`, a generated `agents.toml`, the managed root `AGENTS.md` and its `skip-worktree` flag) are removed or restored before installing;
+- `apm compile` never overwrites a hand-authored `AGENTS.md`; the script warns when that happens because Codex then keeps reading the old rules. Move those rules to `.apm/instructions/<name>.instructions.md` and delete `AGENTS.md`, as the consuming guide describes.
 
 The generated `config/tfs_dashboard.local.json` is intentionally ignored by Git. It lets each devcontainer point the dashboard to its own workspace without changing the shared `config/tfs_dashboard.json` baseline.
 

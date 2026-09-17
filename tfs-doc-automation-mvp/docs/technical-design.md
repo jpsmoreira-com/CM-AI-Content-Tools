@@ -389,29 +389,11 @@ Current uses:
 - default reviewer identity;
 - reviewer override mapping when work item identities need to resolve to specific PR reviewers.
 
-### 7.8.1 Managed Agent Assets
+### 7.8.1 Shared Agent Assets
 
-Reusable Content AI instructions, skills, and agent assets are installed into target repositories under:
+The shared Content AI assets (skills, subagents, always-on guardrails) are published by the `CM-AI-Content-Skills` repository as an APM package (`.apm/` plus `apm.yml`) and installed into target portals with [APM](https://github.com/microsoft/apm). That repository allows no other distribution path, so this pipeline does not copy assets or manage instruction blocks itself.
 
-```text
-.agents/content-ai/
-```
-
-The sync process copies the managed root `AGENTS.md` into the target repository root by default. This makes shared Content AI instructions visible to editor agents that only discover root-level instruction files. Repositories that must keep their own root `AGENTS.md` can opt out with `CONTENT_AI_SYNC_ROOT_AGENTS=false`.
-
-Managed shared assets also live in the namespaced `.agents/content-ai/` folder and are referenced by the generated context package and prompts.
-
-The sync source is the centralized `CM-AI-Content-Skills` checkout (`CONTENT_AI_REPO_PATH`, default `$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Skills`, a sibling of the `CM-AI-Content-Tools` checkout that contains this pipeline):
-
-```text
-instructions/AGENTS.md
-manifest.json
-skills/
-agents/
-instructions/
-```
-
-After the namespaced copy, the sync script installs the shared skills and subagents with `@sentry/dotagents` (project scope in the target workspace): a portal that commits its own `agents.toml` gets exactly its pinned versions, while a bare target repository gets a generated, git-excluded manifest wired to the synced `.agents/content-ai/` copy (dotagents only accepts path sources inside the project root). Interactive and CLI agents therefore load skills from the standard `.agents/skills/` location with tool symlinks (`.claude/skills`, `.codex/`), and `.agents/content-ai/` remains the pipeline-only context material. The sync script writes `.agents/content-ai/install-manifest.json` with copied file checksums and adds `/.agents/` and the dotagents state to `.git/info/exclude` so the assets remain local runtime material by default. It also excludes untracked root `AGENTS.md`; if the target repository already tracks `AGENTS.md`, it marks the file `skip-worktree` after writing the managed copy to avoid blocking automation safety checks with bootstrap-only local changes.
+`scripts/sync-content-ai-assets.sh` runs `apm install` and `apm compile` in the target workspace. A portal that commits `apm.yml` and `apm.lock.yaml` gets exactly its pinned release (`--frozen`); a portal that has not adopted APM yet gets a generated, git-excluded manifest pointing at the sibling `CM-AI-Content-Skills` checkout (`CONTENT_AI_REPO_PATH`) or at `CONTENT_AI_APM_DEPENDENCY`. APM deploys skills to `.agents/skills/` and `.claude/skills/`, subagents to `.github/agents/`, `.claude/agents/` and `.codex/agents/`, guardrails to `.github/instructions/` and `.claude/rules/`, and compiles the guardrails plus portal-local `.apm/instructions/` into `AGENTS.md` and `.github/copilot-instructions.md`. The pipeline's instruction discovery reads those compiled and native files; skills are on-demand workflows and are not part of the acknowledgement contract.
 
 Target devcontainers can call `scripts/devcontainer-bootstrap.sh` to clone or update the central asset repository, install the pipeline dependencies, create a local `tfs-autonomous-pipeline` wrapper, and sync managed assets into the current workspace.
 

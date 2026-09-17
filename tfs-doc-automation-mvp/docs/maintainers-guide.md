@@ -59,7 +59,8 @@ Entry points: `main.py` (FastAPI app), `run_server.py` (port fallback wrapper), 
 2. `config/tfs_dashboard.local.json` — git-ignored local overrides, written by Settings and restored from `CONTENT_AI_SETTINGS_PATH`.
 3. `.env` — runtime settings (`DOC_AUTOMATION_*`), written by `Settings > Save`; template in `.env.example`.
 4. `CONTENT_AI_*` environment variables — devcontainer bootstrap inputs (see `.env.example` and [docker-image-post-create.md](docker-image-post-create.md)). `CONTENT_AI_WORKSPACE_ROOT` defines the shared parent folder of all checkouts; unset falls back to `/workspaces` with a logged warning.
-5. Persistent non-Git state lives outside the checkout under `CONTENT_AI_SETTINGS_PATH` (default `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`): `.env`, local config, Git credential mirror, logs.
+5. Shared skills, subagents and guardrails come from `CM-AI-Content-Skills` through APM (`scripts/sync-content-ai-assets.sh` → `apm install` + `apm compile`); the pipeline never copies them. `CONTENT_AI_APM_VERSION`, `CONTENT_AI_APM_DEPENDENCY` and `CONTENT_AI_APM_INSTALL_CLI` tune that step.
+6. Persistent non-Git state lives outside the checkout under `CONTENT_AI_SETTINGS_PATH` (default `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`): `.env`, local config, Git credential mirror, logs.
 
 ## Agent Providers
 

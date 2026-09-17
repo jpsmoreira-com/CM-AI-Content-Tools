@@ -417,7 +417,7 @@ if git_dir:
     exclude_path = Path(git_dir) / "info" / "exclude"
     exclude_path.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude_path.read_text(encoding="utf-8", errors="replace") if exclude_path.exists() else ""
-    additions = ["/.agents/", "/AGENTS.md", "/.automation-context/", "/.automation-reports/"]
+    additions = ["/.automation-context/", "/.automation-reports/"]
     with exclude_path.open("a", encoding="utf-8") as handle:
         for addition in additions:
             if addition not in existing:

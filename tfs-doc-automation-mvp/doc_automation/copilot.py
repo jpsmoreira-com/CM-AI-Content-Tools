@@ -244,7 +244,7 @@ def build_agent_markdown(*, agent_name: str, model_name: str) -> str:
             "# Documentation automation agent",
             "You update documentation only. Stay within the current Git branch and repository.",
             "Use the attached work item package as the source of truth for the requested change.",
-            "Respect the workspace instructions from `AGENTS.md`, `.github/copilot-instructions.md`, and any `.agents` materials that are attached to this chat.",
+            "Respect the workspace instructions from `AGENTS.md`, `.github/copilot-instructions.md`, `.github/instructions/`, `.claude/rules/`, and any `.agents` materials that are attached to this chat. Use the shared skills under `.agents/skills/` when one matches the work.",
             "Inspect the existing documentation patterns before editing files.",
             "Prefer the smallest accurate change that satisfies the work item.",
             "If no documentation update is needed, explain why instead of forcing edits.",
@@ -1262,7 +1262,7 @@ def build_work_item_context(
     hyperlink_links = list(item.get("hyperlink_links", []) or [])
 
     repository_instructions = [
-        "- The workspace may contain `AGENTS.md`, `.github/copilot-instructions.md`, and `.agents` materials. These are attached when present and must be followed.",
+        "- The workspace may contain `AGENTS.md`, `.github/copilot-instructions.md`, `.github/instructions/`, `.claude/rules/`, and `.agents` materials. These are attached when present and must be followed. Shared skills installed under `.agents/skills/` may be used when one matches the requested work.",
     ]
     configured_model = str(model_name or "").strip() or "the configured agent model"
     repository_instructions.append(
@@ -1603,10 +1603,11 @@ def discover_workspace_instruction_files(distro: str, workspace_path: str) -> Li
     script = " ; ".join(
         [
             f"cd {_shell_quote(workspace_path)}",
-            # `.agents/content-ai` is managed by this pipeline bootstrap. It can
-            # contain copied helper documentation and duplicate instructions, but
-            # it is not a target-repository instruction source to acknowledge.
-            '{ for file in "AGENTS.md" ".github/copilot-instructions.md"; do [ -f "$file" ] && printf "%s\\n" "$file"; done; if [ -d ".agents" ]; then find ".agents" -path ".agents/content-ai" -prune -o -type f -name "*.md" -print | sort | head -n 24; fi; }',
+            # Always-on instruction sources: the compiled AGENTS.md, Copilot's
+            # instruction files, Claude Code rules, and loose .agents notes.
+            # Skills under .agents/skills are on-demand workflows, not
+            # instructions the agent must acknowledge.
+            '{ for file in "AGENTS.md" ".github/copilot-instructions.md"; do [ -f "$file" ] && printf "%s\\n" "$file"; done; for dir in ".github/instructions" ".claude/rules"; do [ -d "$dir" ] && find "$dir" -maxdepth 1 -type f -name "*.md" | sort; done; if [ -d ".agents" ]; then find ".agents" -path ".agents/skills" -prune -o -path ".agents/content-ai" -prune -o -type f -name "*.md" -print | sort | head -n 24; fi; }',
         ]
     )
     result = _run_wsl_script(distro, script)
