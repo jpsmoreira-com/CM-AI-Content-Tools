@@ -224,14 +224,13 @@ Target repositories can install the pipeline and managed Content AI assets from 
 
 ```bash
 CONTENT_AI_TOOLS_REPO_URL=<CM-AI-Content-Tools repo url> \
-CONTENT_AI_REPO_URL=<CM-AI-Content-Skills repo url> \
 CONTENT_AI_TARGET_WORKSPACE="$PWD" \
 bash <repos-parent>/CM-AI-Content-Tools/tfs-doc-automation-mvp/scripts/devcontainer-bootstrap.sh
 ```
 
-The URLs are only needed when the corresponding checkout does not exist yet; an existing checkout is fast-forwarded instead.
+The URL is only needed when the checkout does not exist yet; an existing checkout is fast-forwarded instead.
 
-The recommended devcontainer layout keeps the target repository mounted at `/app`, bind-mounts the WSL host folder that contains the repositories (conventionally `/workspaces`, but any path works) into the container, keeps the central tool checkout at `<repos-parent>/CM-AI-Content-Tools` and the shared-assets checkout at `<repos-parent>/CM-AI-Content-Skills`, and keeps persistent local settings under `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`. This avoids cloning the tool into the target repository or into an ephemeral container-only folder, and it keeps Git worktree metadata visible when the target workspace is opened from a linked worktree.
+The recommended devcontainer layout keeps the target repository mounted at `/app`, bind-mounts the WSL host folder that contains the repositories (conventionally `/workspaces`, but any path works) into the container, keeps the central tool checkout at `<repos-parent>/CM-AI-Content-Tools`, and keeps persistent local settings under `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`. This avoids cloning the tool into the target repository or into an ephemeral container-only folder, and it keeps Git worktree metadata visible when the target workspace is opened from a linked worktree.
 
 For Git Credentials authentication inside a devcontainer, provide one of these optional bootstrap inputs before rebuild:
 
@@ -247,7 +246,7 @@ If those inputs are not configured, open `Settings > Connection` after the dashb
 
 The bootstrap:
 
-- clones or updates the centralized `CM-AI-Content-Tools` and `CM-AI-Content-Skills` checkouts during DevContainer setup only;
+- clones or updates the centralized `CM-AI-Content-Tools` checkout during DevContainer setup only;
 - restores `CONTENT_AI_SETTINGS_PATH/git-credentials` into the devcontainer user's `~/.git-credentials` when available, then validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
 - writes TFS SSL runtime defaults for the devcontainer. Internal devcontainers default to `DOC_AUTOMATION_TFS_VERIFY_SSL=false` unless `CONTENT_AI_TFS_VERIFY_SSL` is provided;
 - installs Codex CLI and GitHub Copilot CLI into the devcontainer user's npm prefix when `TFS_AUTONOMOUS_INSTALL_CODEX_CLI=true` and `TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI=true` respectively, and the executables are missing;
@@ -257,14 +256,14 @@ The bootstrap:
 - creates local runtime files for the target devcontainer, including `.env` and `config/tfs_dashboard.local.json`;
 - restores those local runtime files from `CONTENT_AI_SETTINGS_PATH` when available, then mirrors dashboard saves back to that folder;
 - points the active portal workspace to the target repository workspace, normally `/app` when the devcontainer mounts the repository there;
-- keeps the tool checkout at `CONTENT_AI_TOOLS_REPO_PATH` (default `<repos-parent>/CM-AI-Content-Tools`) and the shared-assets checkout at `CONTENT_AI_REPO_PATH` (default `<repos-parent>/CM-AI-Content-Skills`), where `<repos-parent>` is `CONTENT_AI_WORKSPACE_ROOT` (a warning is logged and `/workspaces` is used when the variable is not set);
+- keeps the tool checkout at `CONTENT_AI_TOOLS_REPO_PATH` (default `<repos-parent>/CM-AI-Content-Tools`), where `<repos-parent>` is `CONTENT_AI_WORKSPACE_ROOT` (a warning is logged and `/workspaces` is used when the variable is not set);
 - installs the shared Content AI assets into the target repository with [APM](https://github.com/microsoft/apm), the only distribution path `CM-AI-Content-Skills` supports: skills to `.agents/skills/` and `.claude/skills/`, subagents to `.github/agents/`, `.claude/agents/` and `.codex/agents/`, and the always-on guardrails to `.github/instructions/` and `.claude/rules/`, compiled into `AGENTS.md` and `.github/copilot-instructions.md`.
 
 How the assets are installed (`scripts/sync-content-ai-assets.sh`, also available as `tfs-autonomous-pipeline sync-assets`):
 
 - the pinned APM CLI (`CONTENT_AI_APM_VERSION`, default `v0.31.0`) is installed into `~/.local/bin` when missing (`CONTENT_AI_APM_INSTALL_CLI=false` disables that and fails instead);
 - a portal that commits its own `apm.yml` is honored as-is: `apm install --frozen` when `apm.lock.yaml` exists (falling back to `apm install` if the lockfile is stale), then `apm compile`. The deployed tree is the portal's to commit, exactly as described in the `CM-AI-Content-Skills` consuming guide;
-- a portal without `apm.yml` gets a generated, git-excluded manifest whose single dependency is `CONTENT_AI_APM_DEPENDENCY` — by default the published `jpsmoreira-com/CM-AI-Content-Skills#main` until a release tag exists; set it to a tag such as `jpsmoreira-com/CM-AI-Content-Skills#v1.0.0` once released, or to a local checkout path (for example `CONTENT_AI_REPO_PATH`) to work offline. Everything APM writes, plus an untracked compiled `AGENTS.md`, is added to `.git/info/exclude`, and the `apm_modules/` line APM appends to `.gitignore` is reverted so the portal stays clean;
+- a portal without `apm.yml` gets a generated, git-excluded manifest whose single dependency is `CONTENT_AI_APM_DEPENDENCY` — by default the published `jpsmoreira-com/CM-AI-Content-Skills#main` until a release tag exists; set it to a tag such as `jpsmoreira-com/CM-AI-Content-Skills#v1.0.0` once released, or to a local `CM-AI-Content-Skills` checkout path to work offline. Everything APM writes, plus an untracked compiled `AGENTS.md`, is added to `.git/info/exclude`, and the `apm_modules/` line APM appends to `.gitignore` is reverted so the portal stays clean;
 - leftovers of the previous contract (`.agents/content-ai/`, a generated `agents.toml`, the managed root `AGENTS.md` and its `skip-worktree` flag) are removed or restored before installing;
 - `apm compile` never overwrites a hand-authored `AGENTS.md`; the script warns when that happens because Codex then keeps reading the old rules. Move those rules to `.apm/instructions/<name>.instructions.md` and delete `AGENTS.md`, as the consuming guide describes.
 

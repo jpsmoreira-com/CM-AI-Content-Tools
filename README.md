@@ -13,22 +13,21 @@ This repository is the companion of [CM-AI-Content-Skills](https://github.com/us
 ## Conventions
 
 - One top-level folder per tool. Each tool is self-contained: its own `README.md`, dependencies, scripts, docs, and local `.gitignore`.
-- Tools consume the shared assets from a sibling `CM-AI-Content-Skills` checkout (by default next to this repository, overridable with `CONTENT_AI_REPO_PATH`), installed into portals with APM as that repository prescribes. Never copy skills, subagents, or instruction blocks into this repository or distribute them by another path.
+- Tools install the shared assets into portals with APM straight from the published `CM-AI-Content-Skills` package (`CONTENT_AI_APM_DEPENDENCY`, default `jpsmoreira-com/CM-AI-Content-Skills#main`; a local checkout path works offline), as that repository prescribes. No tool keeps its own copy of the assets. Never copy skills, subagents, or instruction blocks into this repository or distribute them by another path.
 - Persistent, non-Git tool settings live outside the checkout, under `<repos-parent>/.content-ai-settings/<tool>/`.
 - All documentation, README files, and code comments are written in English.
 - Tools that agents work on keep their own `.agents/memory.md` project memory.
 
 ## Runtime layout
 
-The only layout assumption the tools make is that both checkouts (and the target repositories they work on) sit under one shared parent folder. That folder can be any path and is provided via `CONTENT_AI_WORKSPACE_ROOT`; when the variable is not set, the tools log a warning and default to `/workspaces`, the conventional WSL/devcontainer mount point:
+The only layout assumption the tools make is that this checkout (and the target repositories they work on) sit under one shared parent folder. That folder can be any path and is provided via `CONTENT_AI_WORKSPACE_ROOT`; when the variable is not set, the tools log a warning and default to `/workspaces`, the conventional WSL/devcontainer mount point:
 
 ```text
 <repos-parent>/CM-AI-Content-Tools     this repository   (CONTENT_AI_TOOLS_REPO_PATH)
-<repos-parent>/CM-AI-Content-Skills    shared assets     (CONTENT_AI_REPO_PATH)
 <repos-parent>/.content-ai-settings/   persistent per-tool settings
 ```
 
-When target devcontainers are used, the shared parent folder must be bind-mounted into the container so both checkouts stay visible.
+When target devcontainers are used, the shared parent folder must be bind-mounted into the container so the checkout and the settings stay visible.
 
 ## Adding a tool
 

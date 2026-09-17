@@ -13,10 +13,8 @@ This keeps rebuilds fast, avoids cloning or reinstalling the tool on every repos
 | Path | Purpose |
 | --- | --- |
 | `/opt/content-ai/CM-AI-Content-Tools` | Read-only or image-owned seed copy of the `CM-AI-Content-Tools` repository (this pipeline). |
-| `/opt/content-ai/CM-AI-Content-Skills` | Read-only or image-owned seed copy of the `CM-AI-Content-Skills` repository (shared skills, subagents, rules). |
 | `/opt/content-ai/venvs/tfs-doc-automation-mvp` | Prebuilt Python virtual environment for the TFS Autonomous Pipeline. |
 | `<repos-parent>/CM-AI-Content-Tools` | Writable runtime copy of the tools repository used by the dashboard. Created from the image seed when missing. |
-| `<repos-parent>/CM-AI-Content-Skills` | Writable runtime copy of the shared-assets repository, the source for the portal asset sync. Created from the image seed when missing. |
 | `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp` | Persistent non-Git settings, logs, `.env`, local config, and Git credential mirror. |
 | `/app` | Target repository opened by the devcontainer. |
 | `/app/.agents/skills`, `/app/.claude/`, `/app/.github/`, `/app/.codex/` | Shared Content AI assets deployed by APM (skills, subagents, guardrails); `AGENTS.md` is compiled by `apm compile`. |
@@ -34,7 +32,8 @@ The Docker image should include:
 - Bash, Git, curl, ca-certificates, coreutils, findutils, and unzip.
 - Python 3.11 or newer.
 - Node.js and npm/npx available for executing node CLI clients on-demand when selected.
-- Seed copies of both repositories: `CM-AI-Content-Tools` (this pipeline) and `CM-AI-Content-Skills` (the shared assets it syncs into portals).
+- A seed copy of `CM-AI-Content-Tools` (this pipeline). No copy of `CM-AI-Content-Skills`: the shared assets are an APM package that the post-create step installs straight into the target repository from `CONTENT_AI_APM_DEPENDENCY`.
+- The `apm` CLI on `PATH` (pinned to `CONTENT_AI_APM_VERSION`), so the asset install needs no `aka.ms` egress at start-up; set `CONTENT_AI_APM_INSTALL_CLI=false` in the image to make a missing CLI a hard error instead of a download.
 - Python dependencies installed from `CM-AI-Content-Tools/tfs-doc-automation-mvp/requirements.txt`.
 - `content-ai-post-create` installed on `PATH`, pointing to `CM-AI-Content-Tools/tfs-doc-automation-mvp/scripts/content-ai-post-create.sh`.
 - Recommended VS Code extensions declared in `devcontainer.json`, not installed from the post-create script.
@@ -46,9 +45,8 @@ Do not bake secrets into the image. TFS Git credentials, PATs, Codex auth, and p
 ## Example Dockerfile Fragment
 
 ```Dockerfile
-# Build context contains Git clones of both repositories side by side.
+# Build context contains a Git clone of this repository.
 COPY CM-AI-Content-Tools  /opt/content-ai/CM-AI-Content-Tools
-COPY CM-AI-Content-Skills /opt/content-ai/CM-AI-Content-Skills
 
 RUN python3 -m venv /opt/content-ai/venvs/tfs-doc-automation-mvp \
     && /opt/content-ai/venvs/tfs-doc-automation-mvp/bin/python -m pip install --upgrade pip \
@@ -59,9 +57,9 @@ RUN python3 -m venv /opt/content-ai/venvs/tfs-doc-automation-mvp \
     && chmod +x /usr/local/bin/content-ai-post-create
 ```
 
-Keep the `.git` folders in both seed copies: the post-create script compares the seed and runtime commit SHAs to decide when a runtime copy must be refreshed.
+Keep the `.git` folder in the seed copy: the post-create script compares the seed and runtime commit SHAs to decide when the runtime copy must be refreshed.
 
-If the image uses a non-root remote user, make sure the user can read `/opt/content-ai/CM-AI-Content-Tools` and `/opt/content-ai/CM-AI-Content-Skills` and execute `/opt/content-ai/venvs/tfs-doc-automation-mvp/bin/python`.
+If the image uses a non-root remote user, make sure the user can read `/opt/content-ai/CM-AI-Content-Tools` and execute `/opt/content-ai/venvs/tfs-doc-automation-mvp/bin/python`.
 
 ## Target Devcontainer Configuration
 
@@ -76,8 +74,6 @@ Target repositories should use the image and call the post-create script:
     "CONTENT_AI_TARGET_WORKSPACE": "/app",
     "CONTENT_AI_TOOLS_REPO_PATH": "/workspaces/CM-AI-Content-Tools",
     "CONTENT_AI_TOOLS_IMAGE_REPO_PATH": "/opt/content-ai/CM-AI-Content-Tools",
-    "CONTENT_AI_REPO_PATH": "/workspaces/CM-AI-Content-Skills",
-    "CONTENT_AI_IMAGE_REPO_PATH": "/opt/content-ai/CM-AI-Content-Skills",
     "CONTENT_AI_SETTINGS_PATH": "/workspaces/.content-ai-settings/tfs-doc-automation-mvp",
     "TFS_AUTONOMOUS_PIPELINE_PORT": "7001"
   },
@@ -98,8 +94,8 @@ The exact mounts are owned by the target repository devcontainer. The important 
 `scripts/content-ai-post-create.sh` performs the following steps:
 
 1. Resolves the target workspace, normally `/app`.
-2. Ensures writable runtime copies exist at `<repos-parent>/CM-AI-Content-Tools` (the pipeline) and `<repos-parent>/CM-AI-Content-Skills` (the shared assets).
-3. Uses the image seeds from `/opt/content-ai/CM-AI-Content-Tools` and `/opt/content-ai/CM-AI-Content-Skills` when a runtime copy is missing, and fast-forwards an existing Git runtime copy to the seed commit when they differ.
+2. Ensures a writable runtime copy of the pipeline exists at `<repos-parent>/CM-AI-Content-Tools`.
+3. Uses the image seed from `/opt/content-ai/CM-AI-Content-Tools` when the runtime copy is missing, and fast-forwards an existing Git runtime copy to the seed commit when they differ.
 4. Validates the prebuilt pipeline Python environment.
 5. Creates `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`.
 6. Restores persisted TFS Git credentials from `git-credentials` when available.
@@ -147,10 +143,10 @@ VS Code tasks and status bar buttons should call this wrapper instead of invokin
 | `CONTENT_AI_TOOLS_IMAGE_REPO_PATH` | Derived: the tools copy the script runs from (e.g. `/opt/content-ai/CM-AI-Content-Tools`) | Image seed copy of the tools repository. |
 | `CONTENT_AI_TOOLS_REPO_PATH` | `<repos-parent>/CM-AI-Content-Tools` | Writable runtime copy of the tools repository; the pipeline runs from `<path>/tfs-doc-automation-mvp`. |
 | `CONTENT_AI_TOOLS_BRANCH` | `main` | Tools branch to refresh during DevContainer post-create setup when the runtime copy is a Git checkout. |
-| `CONTENT_AI_IMAGE_REPO_PATH` | Derived: `CM-AI-Content-Skills` next to the tools seed (e.g. `/opt/content-ai/CM-AI-Content-Skills`) | Image seed copy of the shared-assets repository. |
-| `CONTENT_AI_REPO_PATH` | `<repos-parent>/CM-AI-Content-Skills` | Writable runtime copy of the shared-assets repository; source of the portal asset sync. |
 | `CONTENT_AI_SETTINGS_PATH` | `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp` | Persistent local settings. |
-| `CONTENT_AI_BRANCH` | `main` | Shared-assets branch to refresh during DevContainer post-create setup when the runtime copy is a Git checkout. |
+| `CONTENT_AI_APM_VERSION` | `v0.31.0` | APM CLI version installed when `apm` is missing from `PATH`. |
+| `CONTENT_AI_APM_DEPENDENCY` | `jpsmoreira-com/CM-AI-Content-Skills#main` | Dependency written into the generated manifest for a portal that has no committed `apm.yml`; a local `CM-AI-Content-Skills` checkout path works offline. |
+| `CONTENT_AI_APM_INSTALL_CLI` | `true` | `false` fails when `apm` is missing instead of downloading it. |
 | `TFS_AUTONOMOUS_PIPELINE_VENV` | `/opt/content-ai/venvs/tfs-doc-automation-mvp` when present | Pipeline virtual environment. |
 | `TFS_AUTONOMOUS_PIPELINE_PORT` | `7001` | Dashboard port. |
 | `CONTENT_AI_TFS_HOST` | `tfs-product.cmf.criticalmanufacturing.com` | TFS host used for Git credential preflight. |
@@ -171,7 +167,7 @@ VS Code tasks and status bar buttons should call this wrapper instead of invokin
 
 ## Failure Policy
 
-The post-create script should fail when the image is structurally incomplete, for example when the tools seed, the shared-assets seed, or the prebuilt virtual environment is missing.
+The post-create script should fail when the image is structurally incomplete, for example when the tools seed or the prebuilt virtual environment is missing, or when `apm` is missing and `CONTENT_AI_APM_INSTALL_CLI=false`.
 
 The script should warn, not fail, when user-specific state is missing, for example:
 

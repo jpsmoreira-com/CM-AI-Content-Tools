@@ -2,9 +2,9 @@
 set -euo pipefail
 
 TARGET_WORKSPACE="${CONTENT_AI_TARGET_WORKSPACE:-$PWD}"
-# Two checkouts: this tools repository (the pipeline itself) and the shared-assets
-# repository (skills, subagents, managed rules) that the pipeline syncs into portals.
-# Both are assumed to live under one shared parent folder, provided via
+# One checkout: this tools repository (the pipeline itself). The shared assets are an
+# APM package installed straight into the portal by sync-content-ai-assets.sh, not a
+# checkout. The tools checkout lives under one shared parent folder, provided via
 # CONTENT_AI_WORKSPACE_ROOT; when the variable is not set, a warning is logged
 # and /workspaces is used as default.
 if [ -z "${CONTENT_AI_WORKSPACE_ROOT:-}" ]; then
@@ -14,9 +14,6 @@ fi
 CONTENT_AI_TOOLS_REPO_PATH="${CONTENT_AI_TOOLS_REPO_PATH:-$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Tools}"
 CONTENT_AI_TOOLS_REPO_URL="${CONTENT_AI_TOOLS_REPO_URL:-}"
 CONTENT_AI_TOOLS_BRANCH="${CONTENT_AI_TOOLS_BRANCH:-main}"
-CONTENT_AI_REPO_PATH="${CONTENT_AI_REPO_PATH:-$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Skills}"
-CONTENT_AI_REPO_URL="${CONTENT_AI_REPO_URL:-}"
-CONTENT_AI_BRANCH="${CONTENT_AI_BRANCH:-main}"
 CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturing.com}"
 CONTENT_AI_AUTO_STASH_ON_UPDATE="${CONTENT_AI_AUTO_STASH_ON_UPDATE:-true}"
 PIPELINE_PROJECT_PATH="$CONTENT_AI_TOOLS_REPO_PATH/tfs-doc-automation-mvp"
@@ -305,7 +302,6 @@ ensure_codex_cli
 ensure_github_copilot_cli
 
 sync_git_checkout "Content AI tools" "$CONTENT_AI_TOOLS_REPO_PATH" "$CONTENT_AI_TOOLS_REPO_URL" "$CONTENT_AI_TOOLS_BRANCH" CONTENT_AI_TOOLS_REPO_URL
-sync_git_checkout "Content AI shared assets" "$CONTENT_AI_REPO_PATH" "$CONTENT_AI_REPO_URL" "$CONTENT_AI_BRANCH" CONTENT_AI_REPO_URL
 trust_target_workspace
 
 if [ ! -f "$PIPELINE_PROJECT_PATH/requirements.txt" ]; then
@@ -470,8 +466,6 @@ set -euo pipefail
 export CONTENT_AI_SETTINGS_PATH="\${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_SETTINGS_PATH}"
 export CONTENT_AI_TOOLS_REPO_PATH="\${CONTENT_AI_TOOLS_REPO_PATH:-$CONTENT_AI_TOOLS_REPO_PATH}"
 export CONTENT_AI_TOOLS_BRANCH="\${CONTENT_AI_TOOLS_BRANCH:-$CONTENT_AI_TOOLS_BRANCH}"
-export CONTENT_AI_REPO_PATH="\${CONTENT_AI_REPO_PATH:-$CONTENT_AI_REPO_PATH}"
-export CONTENT_AI_BRANCH="\${CONTENT_AI_BRANCH:-$CONTENT_AI_BRANCH}"
 export PIPELINE_PROJECT_PATH="\${PIPELINE_PROJECT_PATH:-\$CONTENT_AI_TOOLS_REPO_PATH/tfs-doc-automation-mvp}"
 export CODEX_HOME="\${CODEX_HOME:-$CODEX_HOME}"
 export NPM_CONFIG_PREFIX="\${NPM_CONFIG_PREFIX:-$NPM_CONFIG_PREFIX}"
