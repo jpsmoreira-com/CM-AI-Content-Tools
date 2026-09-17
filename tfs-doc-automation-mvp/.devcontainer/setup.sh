@@ -15,4 +15,4 @@ if [ "${CONTENT_AI_SYNC_ASSETS:-false}" = "true" ]; then
   bash scripts/sync-content-ai-assets.sh "${CONTENT_AI_TARGET_WORKSPACE:-$PWD}"
 fi
 
-python -m py_compile main.py app.py tfs_dashboard.py run_server.py run_worker.py doc_automation/*.py
+python -m py_compile main.py run_server.py run_worker.py doc_automation/*.py

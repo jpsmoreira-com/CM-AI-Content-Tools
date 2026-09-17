@@ -379,7 +379,7 @@
                             <select name="copilot_provider">
                                 {% for option in copilot_provider_options %}
                                 <option value="{{ option }}" {% if option == runtime_settings.copilot_provider %}selected{% endif %}>
-                                    {% if option == "m365_desktop" %}Microsoft 365 Copilot Desktop (not automation-capable){% elif option == "copilot_cli" %}GitHub Copilot CLI (autonomous){% elif option == "vscode_bridge" %}VS Code Copilot Bridge (autonomous){% elif option == "vscode" %}VS Code Copilot Chat CLI (legacy){% elif option == "codex_cli" %}Codex CLI{% elif option == "claude_cli" %}Claude CLI{% elif option == "custom_cli" %}Custom CLI{% endif %}
+                                    {% if option == "copilot_cli" %}GitHub Copilot CLI (autonomous){% elif option == "vscode_bridge" %}VS Code Copilot Bridge (autonomous){% elif option == "vscode" %}VS Code Copilot Chat CLI (legacy, Windows host only){% elif option == "codex_cli" %}Codex CLI{% elif option == "claude_cli" %}Claude CLI{% elif option == "custom_cli" %}Custom CLI{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
@@ -431,10 +431,6 @@
                                 <option value="{{ option }}" {% if option == runtime_settings.copilot_vscode_window_mode %}selected{% endif %}>{{ "Reuse active window" if option == "reuse" else "Open new window" }}</option>
                                 {% endfor %}
                             </select>
-                        </label>
-                        <label class="full-width">
-                            <span>Microsoft 365 Copilot URL</span>
-                            <input type="text" name="copilot_desktop_url" value="{{ runtime_settings.copilot_desktop_url }}" placeholder="https://m365.cloud.microsoft/chat">
                         </label>
                         <label class="full-width">
                             <span>Reference Documentation Workspace Path</span>

@@ -635,7 +635,7 @@ def save_runtime_settings(
     default_current_iteration_only: bool = Form(False),
     execution_runtime: str = Form("devcontainer"),
     copilot_wsl_distro: str = Form("Ubuntu"),
-    copilot_provider: str = Form("m365_desktop"),
+    copilot_provider: str = Form("vscode_bridge"),
     copilot_model_name: str = Form("CM GPT"),
     copilot_agent_name: str = Form("CM GPT"),
     copilot_cli_host: str = Form("https://github.com"),
@@ -643,7 +643,6 @@ def save_runtime_settings(
     copilot_prompt_template: str = Form(""),
     copilot_cli_command_template: str = Form(""),
     final_reports_path: str = Form(""),
-    copilot_desktop_url: str = Form("https://m365.cloud.microsoft/chat"),
     copilot_reference_docs_path: str = Form(DEFAULT_RUNTIME_SETTINGS["copilot_reference_docs_path"]),
     copilot_strict_model_safety: bool = Form(False),
     copilot_open_wsl_remote: bool = Form(False),
@@ -691,7 +690,6 @@ def save_runtime_settings(
             copilot_prompt_template=copilot_prompt_template,
             copilot_cli_command_template=copilot_cli_command_template,
             final_reports_path=final_reports_path,
-            copilot_desktop_url=copilot_desktop_url,
             copilot_reference_docs_path=copilot_reference_docs_path,
             copilot_strict_model_safety=copilot_strict_model_safety,
             copilot_open_wsl_remote=copilot_open_wsl_remote,
@@ -1053,15 +1051,7 @@ def launch_copilot_session(
         )
         action_label = "session opened" if result["status"] == "launched" else "automation prepared"
         tracked_changes = list(result.get("tracked_changes") or [])
-        if result.get("status") == "desktop_prepared":
-            message = (
-                f"WI {work_item_id}: CM GPT Desktop handoff prepared for branch '{result['branch_name']}'. "
-                f"The prompt was copied to the clipboard and saved at {result['desktop_prompt_path']}. "
-                "Open the CM GPT agent in Microsoft 365 Copilot Desktop, paste the prompt, and run it manually. "
-                "This provider cannot edit the local repository automatically from the dashboard."
-            )
-            result_level = "warning"
-        elif tracked_changes:
+        if tracked_changes:
             message = (
                 f"WI {work_item_id}: CM GPT {action_label} for branch '{result['branch_name']}'. "
                 f"Tracked repo changes were detected."

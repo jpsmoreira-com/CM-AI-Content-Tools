@@ -11,10 +11,6 @@ FEATURE_TYPES = {"user story", "product backlog item", "feature", "product backl
 WORK_TYPES = ["fix", "feature", "task"]
 
 
-def parse_tags(value: str) -> List[str]:
-    return [tag.strip() for tag in value.split(";") if tag.strip()]
-
-
 def extract_version_candidates(*values: str) -> List[str]:
     candidates: List[str] = []
     for value in values:

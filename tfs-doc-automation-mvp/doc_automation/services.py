@@ -3220,7 +3220,6 @@ class AutomationService:
         copilot_prompt_template: str,
         copilot_cli_command_template: str,
         final_reports_path: str,
-        copilot_desktop_url: str,
         copilot_reference_docs_path: str,
         copilot_strict_model_safety: bool,
         copilot_open_wsl_remote: bool,
@@ -3265,7 +3264,6 @@ class AutomationService:
                 copilot_prompt_template=copilot_prompt_template,
                 copilot_cli_command_template=copilot_cli_command_template,
                 final_reports_path=final_reports_path,
-                copilot_desktop_url=copilot_desktop_url,
                 copilot_reference_docs_path=copilot_reference_docs_path,
                 copilot_strict_model_safety=copilot_strict_model_safety,
                 copilot_open_wsl_remote=copilot_open_wsl_remote,
@@ -4338,7 +4336,6 @@ class AutomationService:
         distro = str(runtime_settings.get("copilot_wsl_distro") or "").strip()
         execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
         auto_launch = bool(runtime_settings.get("copilot_auto_launch"))
-        desktop_url = str(runtime_settings.get("copilot_desktop_url") or "").strip()
         reference_docs_path = str(runtime_settings.get("copilot_reference_docs_path") or "").strip()
         prompt_template = str(runtime_settings.get("copilot_prompt_template") or "").strip()
         cli_command_template = str(runtime_settings.get("copilot_cli_command_template") or "").strip()
@@ -4350,23 +4347,6 @@ class AutomationService:
                 config=load_app_config(),
                 runtime_settings=runtime_settings,
             )
-
-        if provider == "m365_desktop":
-            error_message = (
-                "Microsoft 365 Copilot Desktop is not an automation-capable provider for this pipeline. "
-                "Configure an approved executor that can edit the local repository automatically, such as VS Code Copilot with the CM GPT model available."
-            )
-            mark_copilot_result(
-                portal=portal_name,
-                work_item_id=work_item_id,
-                copilot_status="blocked",
-                copilot_context_path="",
-                copilot_workspace_path=workspace_path,
-                copilot_agent_name=agent_name,
-                copilot_error=error_message,
-            )
-            mark_auto_flow_enabled(portal=portal_name, work_item_id=work_item_id, enabled=False)
-            raise ServiceError(error_message)
 
         if not auto_launch:
             error_message = "CM GPT automatic execution is disabled. Enable Run Executor Automatically before running the pipeline."
@@ -4456,7 +4436,6 @@ class AutomationService:
                     prompt_template=prompt_template,
                     cli_command_template=cli_command_template,
                     auto_launch=auto_launch,
-                    desktop_url=desktop_url,
                     strict_model_safety=strict_model_safety,
                     open_wsl_remote=open_wsl_remote,
                     vscode_window_mode=vscode_window_mode,
@@ -4684,9 +4663,6 @@ class AutomationService:
             raise ServiceError("The agent repair flow requires a workspace path and work branch.")
 
         provider = str(runtime_settings.get("copilot_provider") or "").strip()
-        if provider == "m365_desktop":
-            raise ServiceError("Microsoft 365 Copilot Desktop cannot run automatic agent repair.")
-
         repair_count = mark_agent_repair_started(
             portal=portal_name,
             work_item_id=int(current_item["id"]),
@@ -4730,7 +4706,6 @@ class AutomationService:
                 prompt_template=prompt_template,
                 cli_command_template=str(runtime_settings.get("copilot_cli_command_template") or "").strip(),
                 auto_launch=bool(runtime_settings.get("copilot_auto_launch")),
-                desktop_url=str(runtime_settings.get("copilot_desktop_url") or "").strip(),
                 strict_model_safety=bool(runtime_settings.get("copilot_strict_model_safety")),
                 open_wsl_remote=bool(runtime_settings.get("copilot_open_wsl_remote")),
                 vscode_window_mode=str(runtime_settings.get("copilot_vscode_window_mode") or "reuse").strip(),

@@ -28,7 +28,7 @@ ENV_PATH = APP_DIR / ".env"
 VS_CODE_SETTINGS_PATH = Path.home() / "AppData" / "Roaming" / "Code" / "User" / "settings.json"
 AUTH_OPTIONS = ["Windows Credentials", "Git Credentials", "PAT"]
 COPILOT_PERMISSION_LEVEL_OPTIONS = ["default", "autoApprove", "autopilot"]
-COPILOT_PROVIDER_OPTIONS = ["copilot_cli", "vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli", "m365_desktop"]
+COPILOT_PROVIDER_OPTIONS = ["copilot_cli", "vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"]
 COPILOT_VSCODE_WINDOW_MODE_OPTIONS = ["reuse", "new"]
 CONTEXT_CAPTURE_ROOT_MODE_OPTIONS = ["parent", "task"]
 EXECUTION_RUNTIME_OPTIONS = ["devcontainer", "windows_host"]
@@ -107,7 +107,6 @@ DEFAULT_RUNTIME_SETTINGS = {
     "copilot_prompt_template": DEFAULT_AGENT_PROMPT_TEMPLATE,
     "copilot_cli_command_template": "",
     "final_reports_path": str(DATA_DIR / "reports"),
-    "copilot_desktop_url": "https://m365.cloud.microsoft/chat",
     "copilot_reference_docs_path": str(WORKSPACE_ROOT / "Documentation"),
     "copilot_strict_model_safety": False,
     "copilot_open_wsl_remote": True,
@@ -607,9 +606,6 @@ def load_runtime_settings() -> Dict[str, Any]:
             raw.get("DOC_AUTOMATION_FINAL_REPORTS_PATH")
             or DEFAULT_RUNTIME_SETTINGS["final_reports_path"]
         ).strip(),
-        "copilot_desktop_url": str(
-            raw.get("DOC_AUTOMATION_COPILOT_DESKTOP_URL") or DEFAULT_RUNTIME_SETTINGS["copilot_desktop_url"]
-        ).strip(),
         "copilot_reference_docs_path": str(
             raw.get("DOC_AUTOMATION_COPILOT_REFERENCE_DOCS_PATH") or DEFAULT_RUNTIME_SETTINGS["copilot_reference_docs_path"]
         ).strip(),
@@ -703,7 +699,6 @@ def save_runtime_settings(
     copilot_prompt_template: str,
     copilot_cli_command_template: str,
     final_reports_path: str,
-    copilot_desktop_url: str,
     copilot_reference_docs_path: str,
     copilot_strict_model_safety: bool,
     copilot_open_wsl_remote: bool,
@@ -783,7 +778,6 @@ def save_runtime_settings(
         "DOC_AUTOMATION_COPILOT_PROMPT_TEMPLATE": copilot_prompt_template.strip(),
         "DOC_AUTOMATION_COPILOT_CLI_COMMAND_TEMPLATE": copilot_cli_command_template.strip(),
         "DOC_AUTOMATION_FINAL_REPORTS_PATH": final_reports_path.strip(),
-        "DOC_AUTOMATION_COPILOT_DESKTOP_URL": copilot_desktop_url.strip(),
         "DOC_AUTOMATION_COPILOT_REFERENCE_DOCS_PATH": copilot_reference_docs_path.strip(),
         "DOC_AUTOMATION_COPILOT_STRICT_MODEL_SAFETY": "true" if copilot_strict_model_safety else "false",
         "DOC_AUTOMATION_COPILOT_OPEN_WSL_REMOTE": "true" if copilot_open_wsl_remote else "false",

@@ -324,50 +324,6 @@ def _resolve_windows_code_command() -> str:
     raise CopilotIntegrationError("Could not find the VS Code CLI on Windows. Make sure 'code' is available in PATH.")
 
 
-def _copy_text_to_windows_clipboard(text: str) -> None:
-    clean_text = str(text or "")
-    if not clean_text:
-        return
-
-    script = (
-        "[Console]::InputEncoding = [Text.Encoding]::UTF8; "
-        "$text = [Console]::In.ReadToEnd(); "
-        "Set-Clipboard -Value ([string]$text)"
-    )
-    result = _run_windows_command(
-        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-        input_text=clean_text,
-    )
-    if result.returncode != 0:
-        raise CopilotIntegrationError(
-            result.stderr.strip()
-            or result.stdout.strip()
-            or "Failed to copy the CM GPT prompt to the Windows clipboard."
-        )
-
-
-def _open_windows_url(url: str) -> Dict[str, str]:
-    clean_url = str(url or "").strip()
-    if not clean_url:
-        return {
-            "url": "",
-            "stdout": "",
-            "stderr": "",
-        }
-    result = _run_windows_command(["cmd.exe", "/c", "start", "", clean_url])
-    if result.returncode != 0:
-        raise CopilotIntegrationError(
-            result.stderr.strip()
-            or result.stdout.strip()
-            or f"Failed to open '{clean_url}'."
-        )
-    return {
-        "url": clean_url,
-        "stdout": result.stdout.strip(),
-        "stderr": result.stderr.strip(),
-    }
-
-
 def _build_wsl_folder_uri(distro: str, workspace_path: str) -> str:
     encoded_distro = quote(str(distro or "").strip(), safe="")
     encoded_path = quote(str(workspace_path or "").strip(), safe="/")
@@ -1382,39 +1338,6 @@ def build_work_item_context(
         ]
     )
     return "\n".join(lines) + "\n"
-
-
-def build_m365_desktop_prompt(
-    *,
-    agent_name: str,
-    branch_name: str,
-    workspace_path: str,
-    context_text: str,
-) -> str:
-    return "\n".join(
-        [
-            f"You are the `{agent_name}` Microsoft 365 Copilot agent.",
-            "",
-            "Security gate:",
-            "- This prompt contains proprietary company information.",
-            "- Continue only if this chat is running inside the approved company Microsoft 365 Copilot agent named `CM GPT`.",
-            "- If this is not `CM GPT`, stop immediately and do not process the work item.",
-            "",
-            "Repository context:",
-            f"- WSL workspace: `{workspace_path}`",
-            f"- Current branch: `{branch_name}`",
-            "",
-            "Task:",
-            "Review the work item context below and propose the smallest accurate documentation update.",
-            "If you cannot edit the local repository directly from Microsoft 365 Copilot Desktop, return a focused patch plan with exact file paths and replacement text.",
-            "Do not suggest creating PRs. The dashboard controls branch and PR workflow.",
-            "",
-            "Work item context:",
-            "",
-            context_text.strip(),
-            "",
-        ]
-    )
 
 
 def build_work_item_package(
@@ -2765,7 +2688,6 @@ def prepare_cm_gpt_handoff(
     prompt_template: str,
     cli_command_template: str,
     auto_launch: bool,
-    desktop_url: str,
     strict_model_safety: bool,
     open_wsl_remote: bool,
     vscode_window_mode: str,
@@ -2775,19 +2697,15 @@ def prepare_cm_gpt_handoff(
     clean_branch_name = str(branch_name or "").strip()
     clean_agent_name = str(agent_name or "").strip()
     clean_model_name = str(model_name or "").strip()
-    clean_provider = str(provider or "").strip() or "m365_desktop"
+    clean_provider = str(provider or "").strip() or "vscode_bridge"
     if not clean_branch_name:
         raise CopilotIntegrationError("The work branch is not available yet.")
-    if clean_provider == "m365_desktop" and not clean_agent_name:
-        raise CopilotIntegrationError("Configure the CM GPT agent name before launching the integration.")
-    if clean_provider not in {"m365_desktop", "copilot_cli", "vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
+    if clean_provider not in {"copilot_cli", "vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
         raise CopilotIntegrationError(f"Unsupported agent provider '{clean_provider}'.")
     if strict_model_safety and clean_provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}:
         raise CopilotIntegrationError("Strict CM GPT Safety Mode can only be used with the CM GPT-capable Copilot providers.")
     if strict_model_safety and clean_provider in {"vscode", "vscode_bridge"} and clean_model_name.strip().lower() != "cm gpt":
         raise CopilotIntegrationError("The configured Copilot model must be exactly 'CM GPT' before launching this workflow.")
-    if clean_provider == "m365_desktop" and clean_agent_name.strip().lower() != "cm gpt":
-        raise CopilotIntegrationError("The Microsoft 365 Copilot Desktop provider must use the approved 'CM GPT' agent.")
 
     effective_distro, clean_workspace_path = normalize_wsl_target_path(workspace_path, distro)
     if not clean_workspace_path:
@@ -3017,34 +2935,14 @@ def prepare_cm_gpt_handoff(
             work_item_context_text.strip(),
         ]
     )
-    desktop_prompt = build_m365_desktop_prompt(
-        agent_name=clean_agent_name,
-        branch_name=clean_branch_name,
-        workspace_path=clean_workspace_path,
-        context_text=work_item_context_text,
-    )
     _write_file_via_wsl(effective_distro, prompt_path, prompt + "\n")
-    _write_file_via_wsl(effective_distro, f"{package_directory}/m365-desktop-prompt.md", desktop_prompt + "\n")
     if clean_provider == "vscode":
         unique_attached_paths.insert(0, prompt_path)
 
     launch_metadata: Dict[str, Any] = {}
     if auto_launch:
         _remove_file_via_wsl(effective_distro, agent_result_path)
-        if clean_provider == "m365_desktop":
-            launch_metadata = _open_vscode_workspace_from_windows(
-                distro=effective_distro,
-                workspace_path=clean_workspace_path,
-                open_wsl_remote=True,
-                window_mode=vscode_window_mode,
-            )
-            _copy_text_to_windows_clipboard(desktop_prompt)
-            if desktop_url:
-                desktop_metadata = _open_windows_url(desktop_url)
-                launch_metadata["desktop_url"] = str(desktop_metadata.get("url") or "")
-                launch_metadata["desktop_stdout"] = str(desktop_metadata.get("stdout") or "")
-                launch_metadata["desktop_stderr"] = str(desktop_metadata.get("stderr") or "")
-        elif strict_model_safety:
+        if strict_model_safety:
             launch_metadata = _open_vscode_workspace_from_windows(
                 distro=effective_distro,
                 workspace_path=clean_workspace_path,
@@ -3092,9 +2990,7 @@ def prepare_cm_gpt_handoff(
             )
 
     workspace_state = inspect_workspace_state(effective_distro, clean_workspace_path)
-    if clean_provider == "m365_desktop":
-        result_status = "desktop_prepared" if auto_launch else "prepared"
-    elif clean_provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli", "vscode_bridge"}:
+    if clean_provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli", "vscode_bridge"}:
         result_status = "launched" if auto_launch else "prepared"
     else:
         result_status = "prepared" if strict_model_safety else ("launched" if auto_launch else "prepared")
@@ -3107,7 +3003,6 @@ def prepare_cm_gpt_handoff(
         "context_path": main_context_path,
         "agent_result_path": agent_result_path,
         "prompt_path": prompt_path,
-        "desktop_prompt_path": f"{package_directory}/m365-desktop-prompt.md",
         "branch_name": clean_branch_name,
         "distro": effective_distro,
         "attached_paths": unique_attached_paths,
@@ -3118,7 +3013,6 @@ def prepare_cm_gpt_handoff(
         "tracked_changes": list(workspace_state.get("tracked_changes") or []),
         "workspace_target": str(launch_metadata.get("workspace_target") or ""),
         "launch_context": str(launch_metadata.get("launch_context") or ""),
-        "desktop_url": str(launch_metadata.get("desktop_url") or ""),
         "cli_log_path": str(launch_metadata.get("cli_log_path") or ""),
         "cli_pid": str(launch_metadata.get("cli_pid") or ""),
         "bridge_job_path": str(launch_metadata.get("bridge_job_path") or ""),
