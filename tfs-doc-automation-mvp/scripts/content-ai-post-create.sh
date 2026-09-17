@@ -160,7 +160,7 @@ ensure_project_copy() {
     "tfs-doc-automation-mvp/requirements.txt"
   ensure_runtime_copy "Content AI shared-assets checkout" \
     "$CONTENT_AI_IMAGE_REPO_PATH" "$CONTENT_AI_REPO_PATH" "$CONTENT_AI_BRANCH" \
-    "skills"
+    "apm.yml"
 }
 
 ensure_pipeline_python() {

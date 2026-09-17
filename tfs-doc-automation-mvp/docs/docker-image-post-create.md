@@ -106,7 +106,7 @@ The exact mounts are owned by the target repository devcontainer. The important 
 7. Forces Git credential lookup to use the `store` helper.
 8. Writes or restores the pipeline `.env` and `config/tfs_dashboard.local.json`.
 9. Points the active portal workspace to the opened repository.
-10. Installs the shared Content AI assets with APM (`scripts/sync-content-ai-assets.sh`): a committed portal `apm.yml` is honored with `apm install --frozen`; otherwise a git-excluded manifest pointing at the local `CM-AI-Content-Skills` checkout is generated. `apm compile` then produces `AGENTS.md`.
+10. Installs the shared Content AI assets with APM (`scripts/sync-content-ai-assets.sh`): a committed portal `apm.yml` is honored with `apm install --frozen`; otherwise a git-excluded manifest pointing at `CONTENT_AI_APM_DEPENDENCY` (default: the published `CM-AI-Content-Skills` `main` branch) is generated. `apm compile` then produces `AGENTS.md`.
 11. Adds generated automation folders to the target repository Git exclude file.
 12. Prepares an isolated Docker config for repository hooks that invoke Docker.
 13. Optionally pre-pulls the markdownlint Docker image with that isolated config.
