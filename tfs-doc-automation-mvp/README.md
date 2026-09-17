@@ -10,7 +10,10 @@ FastAPI dashboard baseline implemented with the automation control plane, backgr
 
 ## Documentation
 
+- [User Guide](docs/user-guide.md) — for technical writers running the pipeline from a portal devcontainer
+- [Maintainers Guide](docs/maintainers-guide.md) — architecture, configuration layers, routes, portal onboarding, known debt
 - [Technical Design](docs/technical-design.md)
+- [Devcontainer Image Contract](docs/docker-image-post-create.md)
 - [Project Memory](.agents/memory.md)
 
 ## Current Stack

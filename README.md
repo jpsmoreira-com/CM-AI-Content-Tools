@@ -8,7 +8,7 @@ This repository is the companion of [CM-AI-Content-Skills](https://github.com/us
 
 | Tool | Purpose | Documentation |
 | --- | --- | --- |
-| [`tfs-doc-automation-mvp/`](tfs-doc-automation-mvp/) | TFS Autonomous Pipeline: analyzes TFS work items, prepares documentation branches, hands work to an agent provider, and drafts PRs under human supervision. | [README](tfs-doc-automation-mvp/README.md) · [Technical design](tfs-doc-automation-mvp/docs/technical-design.md) · [Devcontainer image contract](tfs-doc-automation-mvp/docs/docker-image-post-create.md) |
+| [`tfs-doc-automation-mvp/`](tfs-doc-automation-mvp/) | TFS Autonomous Pipeline: analyzes TFS work items, prepares documentation branches, hands work to an agent provider, and drafts PRs under human supervision. | [README](tfs-doc-automation-mvp/README.md) · [User guide](tfs-doc-automation-mvp/docs/user-guide.md) · [Maintainers guide](tfs-doc-automation-mvp/docs/maintainers-guide.md) · [Technical design](tfs-doc-automation-mvp/docs/technical-design.md) · [Devcontainer image contract](tfs-doc-automation-mvp/docs/docker-image-post-create.md) |
 
 ## Conventions
 
