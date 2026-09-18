@@ -318,13 +318,31 @@ fi
 
 install_vscode_copilot_bridge() {
   local bridge_directory="$PIPELINE_PROJECT_PATH/vscode-copilot-bridge"
-  local extension_directory="$HOME/.vscode-server/extensions/criticalmanufacturing.cmf-content-ai-pipeline-bridge-0.1.0"
   if [ ! -f "$bridge_directory/package.json" ] || [ ! -f "$bridge_directory/extension.js" ]; then
     echo "Content AI VS Code Copilot bridge source was not found at $bridge_directory." >&2
     return 0
   fi
+  # VS Code names an installed extension directory publisher.name-version, so read both
+  # from the manifest: a version bump must not install beside the previous copy.
+  local bridge_identity bridge_id bridge_version
+  bridge_identity="$(python3 - "$bridge_directory/package.json" <<'PYBRIDGE'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+print(f"{manifest['publisher']}.{manifest['name']} {manifest['version']}")
+PYBRIDGE
+  )" || {
+    echo "Could not read the bridge identity from $bridge_directory/package.json." >&2
+    return 0
+  }
+  bridge_id="${bridge_identity%% *}"
+  bridge_version="${bridge_identity##* }"
+  local extension_directory="$HOME/.vscode-server/extensions/$bridge_id-$bridge_version"
   mkdir -p "$(dirname "$extension_directory")"
-  rm -rf "$extension_directory"
+  # Earlier versions too: VS Code loads the highest version it finds, so a directory
+  # left by a previous version is a stale extension waiting to win.
+  rm -rf "$HOME/.vscode-server/extensions/$bridge_id-"*
   mkdir -p "$extension_directory"
   cp "$bridge_directory/package.json" "$bridge_directory/extension.js" "$bridge_directory/README.md" "$extension_directory/"
   echo "Installed Content AI VS Code Copilot bridge at $extension_directory"
