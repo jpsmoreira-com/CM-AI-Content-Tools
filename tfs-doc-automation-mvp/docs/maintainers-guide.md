@@ -64,9 +64,10 @@ Entry points: `main.py` (FastAPI app), `run_server.py` (port fallback wrapper), 
 
 ## Agent Providers
 
-- `vscode_bridge` (shipped default): the `vscode-copilot-bridge/` VS Code extension, installed by the bootstrap. The dashboard queues a job file; the bridge drives the Copilot session and reports via `bridge-status.json`. Rebuild the `.vsix` with `scripts/build-vscode-copilot-bridge.sh`.
+- `vscode_bridge` (shipped default): the `vscode-copilot-bridge/` VS Code extension, installed by the bootstrap. The dashboard queues a job file; the bridge drives the Copilot session and reports via `bridge-status.json`. `scripts/build-vscode-copilot-bridge.sh` rebuilds the `.vsix`; the post-create runs it before installing, because the install overwrites the source files copied alongside it and a package older than `extension.js` would otherwise reinstate a stale extension.
 - `copilot_cli`: GitHub Copilot CLI, recommended for fully headless runs; denied Git write commands — the dashboard owns commit/push/PR.
-- `codex_cli` / `claude_cli` / `custom_cli`: generic CLI template execution (`CLI Command Template` with `{{prompt_path}}`, `{{workspace_path}}`, ... placeholders).
+- `claude_cli`: Claude CLI, with a built-in command, model-name translation and result recovery like `copilot_cli`. Needs no `CLI Command Template`, though one set in Settings still wins. Supply a credential before use — nothing in the pipeline provisions one.
+- `codex_cli` / `custom_cli`: generic CLI template execution (`CLI Command Template` with `{{prompt_path}}`, `{{workspace_path}}`, ... placeholders). Required — these two build no command of their own.
 - `vscode` (legacy): drives Windows VS Code Chat; only functional when `DOC_AUTOMATION_EXECUTION_RUNTIME=windows_host`.
 
 Legacy note: databases written before the `m365_desktop` provider was removed may still contain `desktop_prepared` statuses; `services.py` treats them as blocked and asks for a rerun with an automation-capable provider.
