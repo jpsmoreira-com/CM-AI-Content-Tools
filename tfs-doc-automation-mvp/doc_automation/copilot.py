@@ -502,6 +502,71 @@ def _github_copilot_cli_command(*, prompt_path: str, model_name: str, agent_name
     return command
 
 
+def _claude_cli_model_id(model_name: str) -> str:
+    """Translate dashboard display names into the model IDs accepted by the Claude CLI.
+
+    The dashboard shows the names the VS Code bridge reports (``Claude Sonnet 5``,
+    ``Claude Haiku 4.5``), which use dotted minor versions. The Claude CLI takes the
+    Anthropic API IDs, where the minor version is hyphenated (``claude-haiku-4-5``),
+    so the two are not interchangeable and a straight pass-through fails.
+    """
+    clean_name = str(model_name or "").strip()
+    normalized_name = re.sub(r"[^a-z0-9]+", " ", clean_name.lower()).strip()
+    aliases = {
+        "claude opus 5": "claude-opus-5",
+        "claude sonnet 5": "claude-sonnet-5",
+        "claude haiku 4 5": "claude-haiku-4-5",
+        "claude fable 5 1": "claude-fable-5-1",
+        "claude opus 4 8": "claude-opus-4-8",
+        "claude opus 4 8 fast mode preview": "claude-opus-4-8",
+        # Bare tier names resolve to the current generation of that tier.
+        "opus": "claude-opus-5",
+        "sonnet": "claude-sonnet-5",
+        "haiku": "claude-haiku-4-5",
+    }
+    return aliases.get(normalized_name, clean_name)
+
+
+def _claude_cli_command(*, prompt_path: str, model_name: str) -> str:
+    """Build the bounded non-interactive command for the Claude CLI provider."""
+    command = " ; ".join(
+        [
+            'export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"',
+            'export PATH="$HOME/.local/bin:$HOME/.local/node/current/bin:$NPM_CONFIG_PREFIX/bin:/usr/local/share/nvm/current/bin:$PATH"',
+            'claude_bin=""',
+            'if command -v claude >/dev/null 2>&1; then claude_bin="$(command -v claude)"; fi',
+            'if [ -z "$claude_bin" ] && [ -x "$NPM_CONFIG_PREFIX/bin/claude" ]; then claude_bin="$NPM_CONFIG_PREFIX/bin/claude"; fi',
+            'if [ -z "$claude_bin" ] && command -v npx >/dev/null 2>&1; then claude_bin="npx --yes @anthropic-ai/claude-code@latest"; fi',
+            'if [ -z "$claude_bin" ]; then echo "Claude CLI executable was not found on PATH and npx is unavailable." >&2; exit 20; fi',
+            # acceptEdits lets the run edit documentation without a prompt, while the
+            # denied Bash patterns keep the dashboard's ownership of commit/push/reset.
+            '$claude_bin -p "$(cat ' + _shell_quote(prompt_path) + ')" '
+            '--permission-mode acceptEdits '
+            '--disallowedTools "Bash(git commit:*)" "Bash(git push:*)" "Bash(git reset:*)" "Bash(git clean:*)" "Bash(rm:*)"',
+        ]
+    )
+    cli_model_name = _claude_cli_model_id(model_name)
+    if cli_model_name:
+        command += " --model " + _shell_quote(cli_model_name)
+    return command
+
+
+def _claude_cli_result_recovery_prompt(*, result_path: str) -> str:
+    """Request the result contract separately when Claude completed but skipped the file write."""
+    return "\n".join(
+        [
+            "# TFS Documentation Automation Result Recovery",
+            "The implementation phase has completed. Do not edit, format, validate, commit, push, or create pull requests.",
+            "Inspect the current repository diff and the prepared work item context already available in `.automation-context/copilot/`.",
+            "Return only one valid JSON object, without Markdown fences or explanatory text.",
+            "The object must contain: `status`, `green_light`, `summary`, `changed_files`, `final_report`, `spec_references`, `validation`, `instruction_files_read`, `capture_files_read`, `prs_reviewed`, `diffs_reviewed`, `work_items_reviewed`, `reviewer_notes`, and optional `error`.",
+            "Use repository-relative paths in `changed_files`. Set `green_light` to true only when the current diff is ready for the dashboard validation and push stages.",
+            "`instruction_files_read` must list every original repository instruction path you read. `final_report` must explain what changed and why.",
+            f"The dashboard will save your JSON response as `{result_path}`.",
+        ]
+    )
+
+
 def _agent_result_recovery_parser_command(*, response_path: str, result_path: str) -> str:
     """Turn a CLI-only JSON response into the result contract consumed by the pipeline."""
     parser = """
@@ -591,6 +656,12 @@ def _launch_cli_agent_in_wsl(
             model_name=model_name,
             agent_name=agent_name,
         )
+    if provider == "claude_cli" and not clean_template:
+        # A configured template still wins, so an operator can override the default.
+        clean_template = _claude_cli_command(
+            prompt_path=prompt_path,
+            model_name=model_name,
+        )
     if not clean_template:
         raise CopilotIntegrationError(
             f"Configure a CLI command template before launching provider '{provider}'."
@@ -620,6 +691,15 @@ def _launch_cli_agent_in_wsl(
             prompt_path=recovery_prompt_path,
             model_name=model_name,
             agent_name=agent_name,
+        )
+    elif provider == "claude_cli":
+        # Without this, a run that finishes but never writes agent-result.json leaves the
+        # dashboard polling forever instead of reporting what the agent actually did.
+        recovery_prompt = _claude_cli_result_recovery_prompt(result_path=agent_result_path)
+        _write_file_via_wsl(distro, recovery_prompt_path, recovery_prompt)
+        recovery_command = _claude_cli_command(
+            prompt_path=recovery_prompt_path,
+            model_name=model_name,
         )
     recovery_parser_command = _agent_result_recovery_parser_command(
         response_path=recovery_response_path,
@@ -890,7 +970,7 @@ printf '%s\n' "$bridge_manifest"
             "ok": True,
             "message": "No CLI provider preflight is required for the selected agent provider.",
         }
-    if clean_provider != "copilot_cli" and not str(cli_command_template or "").strip():
+    if clean_provider not in {"copilot_cli", "claude_cli"} and not str(cli_command_template or "").strip():
         return {
             "status": "error",
             "ok": False,
