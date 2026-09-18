@@ -596,6 +596,7 @@ async function runJob(jobUri) {
     throw new Error(`The Copilot bridge reached its ${maxIterations}-iteration limit without a finish action.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const dispatchOnly = Boolean(job && job.dispatch_only);
     log(`Bridge job failed: ${message}`);
     const result = {
       status: "error",
@@ -616,9 +617,19 @@ async function runJob(jobUri) {
       completed_at: now(),
     };
     try {
-      await writeJson(packageUri(packagePath, RESULT_FILE), result);
-      await writeJson(packageUri(packagePath, JOB_STATE_FILE), { status: "error", completed_at: now(), error: message });
-      await writeBridgeStatus("error", { error: message });
+      // A dispatch package only opens the isolated worktree window. The dashboard polls the
+      // target workspace for agent-result.json, so a result written here is never read, and it
+      // would permanently hide this package from runPendingJobs on every later retry.
+      if (!dispatchOnly) {
+        await writeJson(packageUri(packagePath, RESULT_FILE), result);
+      }
+      await writeJson(packageUri(packagePath, JOB_STATE_FILE), {
+        status: "error",
+        completed_at: now(),
+        error: message,
+        dispatch_only: dispatchOnly,
+      });
+      await writeBridgeStatus("error", { error: message, dispatch_only: dispatchOnly });
     } catch (writeError) {
       log(`Could not persist bridge failure: ${writeError instanceof Error ? writeError.message : String(writeError)}`);
     }

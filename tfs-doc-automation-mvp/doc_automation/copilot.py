@@ -717,6 +717,7 @@ def _queue_vscode_bridge_job(
         dispatch_directory = f"{dispatch_workspace}/{WORKSPACE_CONTEXT_ROOT}/dispatch-{dispatch_slug}"
         dispatch_job_path = f"{dispatch_directory}/bridge-job.json"
         dispatch_state_path = f"{dispatch_directory}/bridge-job-state.json"
+        dispatch_result_path = f"{dispatch_directory}/agent-result.json"
         dispatch_job = {
             "schema_version": 1,
             "provider": "vscode_bridge",
@@ -727,6 +728,9 @@ def _queue_vscode_bridge_job(
             "open_new_window": True,
         }
         _remove_file_via_wsl(distro, dispatch_state_path)
+        # The bridge skips any package that already holds an agent-result.json, so a stale
+        # result from an earlier failed dispatch would silently drop every retry.
+        _remove_file_via_wsl(distro, dispatch_result_path)
         _write_file_via_wsl(distro, dispatch_job_path, json.dumps(dispatch_job, ensure_ascii=False, indent=2) + "\n")
     return {
         "launch_context": "vscode_bridge",

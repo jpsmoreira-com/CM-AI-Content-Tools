@@ -505,6 +505,18 @@ install_vscode_copilot_bridge() {
   cp "$bridge_directory/package.json" "$bridge_directory/extension.js" "$bridge_directory/README.md" "$extension_directory/"
   log "Installed Content AI VS Code Copilot bridge files at $extension_directory"
 
+  # The VSIX install below overwrites the files copied above, so a VSIX that is older
+  # than the bridge source would silently reinstate a stale extension. Rebuild it from
+  # the current source first to keep the two in step.
+  local bridge_builder="$PIPELINE_PROJECT_PATH/scripts/build-vscode-copilot-bridge.sh"
+  if [ -x "$bridge_builder" ]; then
+    if bash "$bridge_builder" >/dev/null 2>&1; then
+      log "Rebuilt the Content AI VS Code Copilot bridge VSIX from source."
+    else
+      warn "Could not rebuild the bridge VSIX from source; the existing package may be stale."
+    fi
+  fi
+
   # When invoked by a connected VS Code remote session, the CLI can register the
   # VSIX immediately. The copied extension files remain a reliable fallback for
   # the next devcontainer reconnect if the Remote CLI socket is not available.
