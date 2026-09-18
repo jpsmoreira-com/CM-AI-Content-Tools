@@ -28,7 +28,7 @@ It never:
 2. Open the dashboard in the browser and go to `Settings > Connection`.
 3. Run `TFS Git Credentials Setup` with your TFS username and token. The credentials are stored in the container's Git credential store and mirrored to your persistent settings folder, so they survive container rebuilds. If your team pre-configured `CONTENT_AI_TFS_GIT_*` inputs, this step is already done.
 4. The bootstrap also installs the shared Content Team skills (`/style-guide-validator`, `/tutorial-source-to-mkdocs`, `/docs-change-summary`) and review subagents into the portal through APM, so they are available to you and to the pipeline's agent in every devcontainer.
-5. Check `Settings > Automation`: the agent provider should be `VS Code Copilot Bridge (autonomous)` and the model `CM GPT` unless your team told you otherwise.
+5. Check `Settings > Automation`: select the agent provider, custom agent name, and model approved for your team.
 
 ## The Sprint Workflow
 

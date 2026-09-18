@@ -23,7 +23,7 @@ FastAPI dashboard baseline implemented with the automation control plane, backgr
 - SQLite for local workflow state
 - TFS/Azure DevOps Server REST integration
 - `.env` runtime settings
-- VS Code Copilot / CM GPT automation integration for WSL workspaces
+- configurable agent automation through GitHub Copilot CLI, VS Code Copilot, Codex CLI, Claude CLI, or a custom CLI
 - configurable agent provider handoff for VS Code Copilot or local CLI executors
 
 ## Language Convention
@@ -67,8 +67,8 @@ The default dashboard port is `7001` so it does not conflict with MkDocs (common
 - manual base-branch and work-type override in the dashboard;
 - local SQLite persistence for work item planning and action state;
 - work branch creation through TFS refs;
-- CM GPT automation preparation on the configured WSL workspace for each portal;
-- VS Code Copilot execution for environments where CM GPT is available as a VS Code-compatible custom model or mode;
+- agent automation preparation on the configured workspace for each portal;
+- GitHub Copilot CLI and VS Code Copilot execution with the agent and model selected in Settings;
 - configurable CLI provider handoff for Codex, Claude, or another local command that can write the expected result file;
 - persisted agent result tracking through `agent-result.json`;
 - final task reports under the configured reports folder;
@@ -106,10 +106,10 @@ Each portal now represents a target documentation repository plus a work item so
 - `project` and `repository` identify the target repository where branches and PRs are created.
 - `work_item_project` and `work_item_team` identify the board/team used to resolve the current sprint.
 - `work_item_area_path` defines the development area subtree used to load candidate work items, for example `Product\Development`.
-- `copilot_workspace_path` identifies the WSL clone that CM GPT should use when the dashboard launches a Copilot session.
+- `copilot_workspace_path` identifies the repository clone that the configured agent should use.
 - Content team members are configured in `.env` and define which assigned tasks are loaded into the dashboard.
 
-## CM GPT Integration Notes
+## Agent Integration Notes
 
 The agent step is designed as an automatic pipeline step. A provider is valid only when it can edit the configured local repository without user intervention and can write the expected `agent-result.json` file.
 
@@ -124,7 +124,7 @@ For VS Code Copilot (bridge and legacy chat providers):
 - referenced specification documents from the configured reference documentation workspace are resolved into `.automation-context/copilot/<branch>/reference-docs/`, including an index and text extracts for readable `.docx`/`.docm` files;
 - the `.automation-context/` root is added to the repository's local `.git/info/exclude` file so the context package is visible to VS Code agents but is not committed or shown as normal untracked work;
 - the dashboard switches the configured WSL clone to the selected work branch;
-- the dashboard validates that the workspace is on the expected work branch before launching CM GPT;
+- the dashboard validates that the workspace is on the expected work branch before launching the configured agent;
 - the dashboard can submit a `code chat` prompt using the generated custom agent when strict model-safety mode is disabled;
 - the prompt names the configured Settings `Agent Name` and `Model Name` as the functional agent/model contract; the generated VS Code transport mode is only used to deliver the handoff and must not be treated as a reason to stop the run by itself;
 - strict model-safety mode is blocked for the automatic pipeline because it prepares context only and does not execute repository edits.
@@ -184,7 +184,7 @@ The current handoff also:
 - lists work item attachment links, hyperlink relations, image sources found in the work item HTML, and referenced `.docx` files;
 - creates a reference-documentation package for detected specification names so the agent can read `reference-docs/index.md` and packaged text extracts before reporting that a spec could not be found;
 - serves protected TFS image attachments through the local `/tfs-assets` proxy so the dashboard can render images with the configured TFS credentials;
-- can point CM GPT to a shared reference documentation workspace (default: a `Documentation` folder next to the repository checkouts).
+- can point the configured agent to a shared reference documentation workspace (default: a `Documentation` folder next to the repository checkouts).
 
 Context capture can be configured from `Settings > Automation`:
 
@@ -196,23 +196,23 @@ Context capture can be configured from `Settings > Automation`:
 
 After a provider handoff is prepared, the work item detail panel exposes `View Context Package`. This opens a read-only dashboard page for the generated `capture/summary.md`, `capture/INSTRUCTIONS.md`, and `capture/manifest.json` files so reviewers can audit exactly which evidence was sent to the agent.
 
-Before using the CM GPT action, configure these values in `Settings`:
+Before using the agent action, configure these values in `Settings`:
 
-- portal `CM GPT Workspace Path In WSL`;
+- portal agent workspace path;
 - runtime `Execution Runtime`, left as `Devcontainer / native Linux` for the default one-click setup or changed to `Windows host via WSL` when the dashboard process runs on Windows and must call `wsl.exe`;
 - runtime `WSL Distro`;
 - runtime `Copilot Provider`, set to `VS Code Copilot` for automatic execution;
 - runtime `Initial Agent Prompt Template`, used to generate each work item prompt;
 - runtime `Final Reports Path`, used to store final task reports;
-- runtime `Agent Name` set to `CM GPT`;
+- runtime `Agent Name` set to the Copilot custom agent that should execute the work;
 - runtime `Run Executor Automatically`, enabled;
-- runtime `Strict CM GPT Safety Mode`, disabled only when VS Code Copilot can enforce the approved `CM GPT` model;
+- runtime `Preparation-Only Mode`, enabled only when a human must launch the prepared VS Code handoff;
 - runtime `Open Workspace In WSL Remote`, which avoids opening WSL repositories as local UNC folders in VS Code;
 - runtime `Auto-Accept Edit Delay`, which maps to VS Code `chat.editing.autoAcceptDelay` for automatic acceptance of generated edits.
 
 Temporary test mode:
 
-- turning off `Strict CM GPT Safety Mode` disables the CM GPT-only guard and lets the dashboard use the configured `Model Name`;
+- turning off `Preparation-Only Mode` lets the dashboard launch the configured provider, agent, and model automatically;
 - this is intended only for end-to-end pipeline validation with explicitly selected VS Code Copilot models such as `GPT-4o` or `GPT-4.1`;
 - re-enable the strict guard before processing proprietary work items in the approved production flow.
 

@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 
 class CopilotIntegrationError(RuntimeError):
-    """Raised when the CM GPT handoff cannot be prepared safely."""
+    """Raised when the configured agent handoff cannot be prepared safely."""
 
     def __init__(self, message: str, *, code: str = "") -> None:
         super().__init__(message)
@@ -226,18 +226,28 @@ def normalize_wsl_target_path(path_value: str, default_distro: str) -> Tuple[str
     return inferred_distro, normalized_path.rstrip("/") or "/"
 
 
-def build_agent_markdown(*, agent_name: str, model_name: str) -> str:
+def build_agent_markdown(*, agent_name: str, model_name: str, target: str = "vscode") -> str:
+    clean_target = str(target or "vscode").strip()
     frontmatter = [
         "---",
         f"name: {_yaml_string(agent_name)}",
         'description: "Apply documentation updates for a TFS work item on the current branch."',
         'argument-hint: "Run the documentation automation handoff for the prepared work item package."',
-        "target: vscode",
+        f"target: {_yaml_string(clean_target)}",
         "user-invocable: true",
-        'tools: ["changes", "codebase", "editFiles", "fetch", "findTestFiles", "githubRepo", "openSimpleBrowser", "problems", "runCommands", "runNotebooks", "search", "searchResults", "terminalLastCommand", "terminalSelection", "testFailure", "usages", "vscodeAPI"]',
     ]
-    if str(model_name or "").strip():
-        frontmatter.append(f"model: {_yaml_string(model_name)}")
+    if clean_target == "vscode":
+        frontmatter.append(
+            'tools: ["changes", "codebase", "editFiles", "fetch", "findTestFiles", "githubRepo", "openSimpleBrowser", "problems", "runCommands", "runNotebooks", "search", "searchResults", "terminalLastCommand", "terminalSelection", "testFailure", "usages", "vscodeAPI"]'
+        )
+    clean_model_name = str(model_name or "").strip()
+    if clean_model_name:
+        profile_model = (
+            _github_copilot_cli_model_id(clean_model_name)
+            if clean_target == "github-copilot"
+            else clean_model_name
+        )
+        frontmatter.append(f"model: {_yaml_string(profile_model)}")
     frontmatter.extend(
         [
             "---",
@@ -257,8 +267,9 @@ def build_agent_markdown(*, agent_name: str, model_name: str) -> str:
     return "\n".join(frontmatter) + "\n"
 
 
-def get_custom_agent_identifier() -> str:
-    return CUSTOM_AGENT_FILE_BASENAME
+def get_custom_agent_identifier(agent_name: str = "") -> str:
+    clean_name = re.sub(r"[^a-z0-9._-]+", "-", str(agent_name or "").strip().lower()).strip("-._")
+    return clean_name or CUSTOM_AGENT_FILE_BASENAME
 
 
 def get_windows_user_agent_directory() -> Path:
@@ -832,6 +843,7 @@ def check_agent_provider_prerequisites(
     cli_command_template: str,
     workspace_path: str = "",
     model_name: str = "",
+    agent_name: str = "",
 ) -> Dict[str, Any]:
     clean_provider = str(provider or "").strip()
     if clean_provider == "vscode_bridge":
@@ -980,6 +992,20 @@ printf '%s\n' "$bridge_manifest"
     if clean_provider == "copilot_cli":
         cli_model_name = _github_copilot_cli_model_id(model_name)
         model_option = f" --model={_shell_quote(cli_model_name)}" if cli_model_name else ""
+        clean_agent_name = str(agent_name or "").strip()
+        agent_identifier = get_custom_agent_identifier(clean_agent_name) if clean_agent_name else ""
+        agent_option = f" --agent={_shell_quote(agent_identifier)}" if agent_identifier else ""
+        if agent_identifier:
+            home_path = _resolve_wsl_home(distro)
+            _write_file_via_wsl(
+                distro,
+                f"{home_path}/.copilot/agents/{agent_identifier}.agent.md",
+                build_agent_markdown(
+                    agent_name=clean_agent_name,
+                    model_name=model_name,
+                    target="github-copilot",
+                ),
+            )
         script = r'''
 set -eu
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
@@ -997,7 +1023,7 @@ if [ -z "$copilot_bin" ]; then
   exit 20
 fi
 $copilot_bin --version
-$copilot_bin -p 'Reply with READY only.' -s --no-ask-user''' + model_option + "\n"
+$copilot_bin -p 'Reply with READY only.' -s --no-ask-user''' + model_option + agent_option + "\n"
         result = _run_wsl_script(distro, script, timeout_seconds=90)
         output = "\n".join([result.stdout or "", result.stderr or ""]).strip()
         authentication_missing = "no authentication information found" in output.lower()
@@ -1017,7 +1043,7 @@ $copilot_bin -p 'Reply with READY only.' -s --no-ask-user''' + model_option + "\
         return {
             "status": "ok",
             "ok": True,
-            "message": "GitHub Copilot CLI is installed, authenticated, and accepts the configured model in this runtime.",
+            "message": "GitHub Copilot CLI is installed, authenticated, and accepts the configured agent and model in this runtime.",
             "stdout": result.stdout.strip(),
             "stderr": result.stderr.strip(),
         }
@@ -1503,14 +1529,14 @@ def _ensure_clean_workspace(distro: str, workspace_path: str) -> None:
         f"git -C {_shell_quote(workspace_path)} status --porcelain --untracked-files=no",
     )
     if status_result.returncode != 0:
-        raise CopilotIntegrationError(status_result.stderr.strip() or status_result.stdout.strip() or "Workspace is not ready for CM GPT.")
+        raise CopilotIntegrationError(status_result.stderr.strip() or status_result.stdout.strip() or "Workspace is not ready for the configured agent.")
     if status_result.stdout.strip():
         short_status = _run_wsl_script(
             distro,
             f"git -C {_shell_quote(workspace_path)} status --short --untracked-files=no",
         )
         raise CopilotIntegrationError(
-            "The configured workspace has tracked local changes. Commit or stash them before launching CM GPT.\n"
+            "The configured workspace has tracked local changes. Commit or stash them before launching the configured agent.\n"
             + (short_status.stdout.strip() or status_result.stdout.strip())
         )
 
@@ -2187,9 +2213,14 @@ def is_wsl_process_running(distro: str, process_id: str) -> bool:
     clean_process_id = str(process_id or "").strip()
     if not clean_process_id.isdigit():
         return False
+    quoted_pid = _shell_quote(clean_process_id)
     result = _run_wsl_script(
         distro,
-        f"kill -0 {_shell_quote(clean_process_id)} >/dev/null 2>&1",
+        (
+            f"kill -0 {quoted_pid} >/dev/null 2>&1 || exit 1; "
+            f"if [ -r /proc/{quoted_pid}/stat ]; then "
+            f"state=$(awk '{{print $3}}' /proc/{quoted_pid}/stat); [ \"$state\" != Z ]; fi"
+        ),
         timeout_seconds=30,
     )
     return result.returncode == 0
@@ -2786,7 +2817,7 @@ def _run_git_push_with_docker_config_fallback(
     return fallback_result
 
 
-def prepare_cm_gpt_handoff(
+def prepare_agent_handoff(
     *,
     distro: str,
     workspace_path: str,
@@ -2815,13 +2846,11 @@ def prepare_cm_gpt_handoff(
     if clean_provider not in {"copilot_cli", "vscode_bridge", "vscode", "codex_cli", "claude_cli", "custom_cli"}:
         raise CopilotIntegrationError(f"Unsupported agent provider '{clean_provider}'.")
     if strict_model_safety and clean_provider in {"copilot_cli", "codex_cli", "claude_cli", "custom_cli"}:
-        raise CopilotIntegrationError("Strict CM GPT Safety Mode can only be used with the CM GPT-capable Copilot providers.")
-    if strict_model_safety and clean_provider in {"vscode", "vscode_bridge"} and clean_model_name.strip().lower() != "cm gpt":
-        raise CopilotIntegrationError("The configured Copilot model must be exactly 'CM GPT' before launching this workflow.")
+        raise CopilotIntegrationError("Preparation-Only Mode is available only with VS Code Copilot providers.")
 
     effective_distro, clean_workspace_path = normalize_wsl_target_path(workspace_path, distro)
     if not clean_workspace_path:
-        raise CopilotIntegrationError("Configure the Copilot workspace path for this portal before launching CM GPT.")
+        raise CopilotIntegrationError("Configure the agent workspace path for this portal before launching the workflow.")
     dispatcher_workspace_path = clean_workspace_path
     _, normalized_reference_docs_path = normalize_wsl_target_path(reference_docs_path, effective_distro)
 
@@ -2849,7 +2878,7 @@ def prepare_cm_gpt_handoff(
         _ensure_current_branch(effective_distro, clean_workspace_path, clean_branch_name)
     _ensure_workspace_context_excluded(effective_distro, clean_workspace_path)
 
-    agent_identifier = get_custom_agent_identifier()
+    agent_identifier = get_custom_agent_identifier(clean_agent_name)
     home_path = _resolve_wsl_home(effective_distro)
     agent_path = f"{home_path}/.copilot/agents/{agent_identifier}.agent.md"
     safe_branch_slug = clean_branch_name.replace("/", "-")
@@ -2873,13 +2902,28 @@ def prepare_cm_gpt_handoff(
             package_files[clean_relative_name] = str(file_content or "")
 
     agent_file_paths: List[str] = []
-    if clean_provider == "vscode":
+    if clean_provider == "vscode" and clean_agent_name:
         agent_file_paths = _write_vscode_agent_files(
             distro=effective_distro,
             wsl_agent_path=agent_path,
             agent_identifier=agent_identifier,
-            agent_content=build_agent_markdown(agent_name=clean_agent_name, model_name=clean_model_name),
+            agent_content=build_agent_markdown(
+                agent_name=clean_agent_name,
+                model_name=clean_model_name,
+                target="vscode",
+            ),
         )
+    elif clean_provider == "copilot_cli" and clean_agent_name:
+        _write_file_via_wsl(
+            effective_distro,
+            agent_path,
+            build_agent_markdown(
+                agent_name=clean_agent_name,
+                model_name=clean_model_name,
+                target="github-copilot",
+            ),
+        )
+        agent_file_paths = [agent_path]
     for relative_name, file_content in package_files.items():
         _write_file_via_wsl(
             effective_distro,
@@ -3071,7 +3115,7 @@ def prepare_cm_gpt_handoff(
                 agent_result_path=agent_result_path,
                 branch_name=clean_branch_name,
                 model_name=clean_model_name,
-                agent_name=clean_agent_name,
+                agent_name=agent_identifier if clean_provider == "copilot_cli" and clean_agent_name else clean_agent_name,
                 provider=clean_provider,
                 log_path=cli_log_path,
             )

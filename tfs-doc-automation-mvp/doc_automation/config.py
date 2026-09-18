@@ -103,7 +103,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "copilot_wsl_distro": "Ubuntu",
     "copilot_provider": "copilot_cli",
     "copilot_model_name": "GPT 5.6 Terra",
-    "copilot_agent_name": "",
+    "copilot_agent_name": "Content AI Documentation",
     "copilot_cli_host": "https://github.com",
     "copilot_auto_launch": True,
     "copilot_prompt_template": DEFAULT_AGENT_PROMPT_TEMPLATE,

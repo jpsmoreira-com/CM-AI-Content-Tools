@@ -40,7 +40,7 @@ from .copilot import (
     get_windows_user_agent_directory,
     inspect_agent_result_file,
     normalize_wsl_target_path,
-    prepare_cm_gpt_handoff,
+    prepare_agent_handoff,
     read_agent_result,
     read_agent_provider_status,
     read_wsl_text_file,
@@ -3532,6 +3532,7 @@ class AutomationService:
                     cli_command_template=str(runtime_settings.get("copilot_cli_command_template") or "").strip(),
                     workspace_path=workspace_path,
                     model_name=str(runtime_settings.get("copilot_model_name") or "").strip(),
+                    agent_name=str(runtime_settings.get("copilot_agent_name") or "").strip(),
                 )
                 message = str(preflight.get("message") or "").lower()
                 if (
@@ -4499,7 +4500,7 @@ class AutomationService:
 
         effective_branch_name = str(current_item.get("effective_branch_name") or plan.get("branch_name") or "").strip()
         if not current_item.get("has_branch") or not effective_branch_name:
-            raise ServiceError("Create or detect the work branch before launching CM GPT.")
+            raise ServiceError("Create or detect the work branch before launching the configured agent.")
 
         runtime_settings = load_runtime_settings()
         workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
@@ -4545,7 +4546,7 @@ class AutomationService:
             )
 
         if not auto_launch:
-            error_message = "CM GPT automatic execution is disabled. Enable Run Executor Automatically before running the pipeline."
+            error_message = "Automatic agent execution is disabled. Enable Run Executor Automatically before running the pipeline."
             mark_copilot_result(
                 portal=portal_name,
                 work_item_id=work_item_id,
@@ -4560,8 +4561,8 @@ class AutomationService:
 
         if provider in {"vscode", "vscode_bridge"} and strict_model_safety:
             error_message = (
-                "Strict CM GPT Safety Mode prepares context only and does not run automatic edits. "
-                "Disable it only for temporary end-to-end testing or when VS Code Copilot can enforce the approved CM GPT model for this workspace."
+                "Preparation-Only Mode creates the context package but does not run automatic edits. "
+                "Disable it when the configured provider is ready to enforce the selected agent and model."
             )
             mark_copilot_result(
                 portal=portal_name,
@@ -4619,7 +4620,7 @@ class AutomationService:
 
         try:
             with execution_runtime_scope(execution_runtime):
-                result = prepare_cm_gpt_handoff(
+                result = prepare_agent_handoff(
                     distro=distro,
                     workspace_path=workspace_path,
                     branch_name=effective_branch_name,
@@ -4889,7 +4890,7 @@ class AutomationService:
 
         execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
         with execution_runtime_scope(execution_runtime):
-            result = prepare_cm_gpt_handoff(
+            result = prepare_agent_handoff(
                 distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
                 workspace_path=workspace_path,
                 branch_name=branch_name,
