@@ -546,6 +546,8 @@ def save_work_item_plan(
                 reviewer_display_name = excluded.reviewer_display_name,
                 reviewer_unique_name = excluded.reviewer_unique_name,
                 reviewer_id = excluded.reviewer_id,
+                auto_flow_runtime_status = '',
+                auto_flow_runtime_message = '',
                 updated_at = excluded.updated_at
             """,
             (
@@ -577,6 +579,82 @@ def save_work_item_plan(
                 "branch_name": branch_name,
                 "reviewer": reviewer_display_name,
             },
+            created_at=timestamp,
+        )
+
+
+def mark_auto_flow_needs_plan(
+    *,
+    portal: str,
+    work_item_id: int,
+    iteration_path: str,
+    triage_status: str,
+    work_type: str,
+    branch_name: str,
+    reviewer_display_name: str,
+    reviewer_unique_name: str,
+    reviewer_id: str,
+    message: str,
+) -> None:
+    """Persist a pre-execution planning block so the dashboard can surface it."""
+    timestamp = utc_now()
+    with connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO work_item_state (
+                portal,
+                work_item_id,
+                iteration_path,
+                triage_status,
+                selected_base_branch,
+                work_type,
+                branch_name,
+                reviewer_display_name,
+                reviewer_unique_name,
+                reviewer_id,
+                auto_flow_enabled,
+                auto_flow_runtime_status,
+                auto_flow_runtime_message,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, 0, 'needs_plan', ?, ?)
+            ON CONFLICT(portal, work_item_id) DO UPDATE SET
+                iteration_path = excluded.iteration_path,
+                triage_status = excluded.triage_status,
+                work_type = excluded.work_type,
+                branch_name = excluded.branch_name,
+                reviewer_display_name = excluded.reviewer_display_name,
+                reviewer_unique_name = excluded.reviewer_unique_name,
+                reviewer_id = excluded.reviewer_id,
+                auto_flow_enabled = 0,
+                auto_flow_runtime_status = 'needs_plan',
+                auto_flow_runtime_message = excluded.auto_flow_runtime_message,
+                updated_at = excluded.updated_at
+            """,
+            (
+                portal,
+                work_item_id,
+                iteration_path,
+                triage_status,
+                work_type,
+                branch_name,
+                reviewer_display_name,
+                reviewer_unique_name,
+                reviewer_id,
+                message,
+                timestamp,
+            ),
+        )
+        _insert_work_item_event(
+            connection,
+            portal=portal,
+            work_item_id=work_item_id,
+            event_type="auto_flow_needs_plan",
+            stage="Plan",
+            status="needs_plan",
+            level="warning",
+            message=message,
+            metadata={"branch_name": branch_name, "work_type": work_type},
             created_at=timestamp,
         )
 

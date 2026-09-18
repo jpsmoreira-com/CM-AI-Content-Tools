@@ -1094,6 +1094,10 @@ button[disabled] {
     border-top: 1px solid var(--border);
 }
 
+.detail-metadata-row.has-related-branch {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .detail-metadata-row div,
 .detail-status-list div {
     min-width: 0;
@@ -2044,6 +2048,7 @@ details p {
     .detail-overview-main,
     .detail-signal-grid,
     .detail-metadata-row,
+    .detail-metadata-row.has-related-branch,
     .detail-two-column {
         grid-template-columns: 1fr;
     }

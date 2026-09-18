@@ -187,15 +187,20 @@
 </section>
 {% endif %}
 
-{% if auto_refresh_seconds %}
+{% if automation_summary_count %}
 <section class="band">
     <div class="live-automation-panel" id="live-refresh-note">
         <div class="live-automation-heading">
             <div>
-                <span class="section-kicker">Active Automation</span>
-                <h2>{{ active_automation_count }} work item{% if active_automation_count != 1 %}s{% endif %} in progress</h2>
+                <span class="section-kicker">Automation Status</span>
+                <h2>
+                    {{ active_automation_count }} work item{% if active_automation_count != 1 %}s{% endif %} in progress{% if attention_automation %},
+                    {{ attention_automation|length }} need{% if attention_automation|length == 1 %}s{% endif %} planning{% endif %}
+                </h2>
             </div>
+            {% if auto_refresh_seconds %}
             <span class="live-automation-refresh">Updates every {{ auto_refresh_seconds }} seconds</span>
+            {% endif %}
         </div>
         <div class="live-automation-groups">
             <section class="live-automation-group" data-live-group-section="in_progress" {% if not in_progress_automation %}hidden{% endif %}>
@@ -226,6 +231,27 @@
                 </div>
                 <div class="live-automation-list" data-live-group-list="queued">
                     {% for item in queued_automation %}
+                    <div class="live-automation-item" data-live-work-item-id="{{ item.id }}">
+                        <div class="live-automation-work-item">
+                            <a href="#work-item-{{ item.id }}">WI {{ item.id }}</a>
+                            <strong>{{ item.title }}</strong>
+                        </div>
+                        <div class="live-automation-status">
+                            <strong data-live-stage>{{ item.stage_label }}</strong>
+                            <span data-live-message>{{ item.auto_flow_runtime_message or item.activity_message }}</span>
+                        </div>
+                        <time data-live-updated>{{ item.updated_at or "Waiting for first update" }}</time>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+            <section class="live-automation-group" data-live-group-section="attention" {% if not attention_automation %}hidden{% endif %}>
+                <div class="live-automation-group-heading">
+                    <h3>Work Items Needing Attention</h3>
+                    <span data-live-group-count>{{ attention_automation|length }}</span>
+                </div>
+                <div class="live-automation-list" data-live-group-list="attention">
+                    {% for item in attention_automation %}
                     <div class="live-automation-item" data-live-work-item-id="{{ item.id }}">
                         <div class="live-automation-work-item">
                             <a href="#work-item-{{ item.id }}">WI {{ item.id }}</a>
@@ -462,7 +488,14 @@
             .filter(Boolean);
         const note = document.getElementById("live-refresh-note");
 
+        function isSummaryStatus(status) {
+            return status.is_auto_flow_active || status.auto_flow_runtime_status === "needs_plan";
+        }
+
         function getLiveGroup(status) {
+            if (status.auto_flow_runtime_status === "needs_plan") {
+                return "attention";
+            }
             return status.auto_flow_runtime_status === "queued" ? "queued" : "in_progress";
         }
 
@@ -536,7 +569,7 @@
                     if (!liveItem) {
                         return;
                     }
-                    if (!status.is_auto_flow_active) {
+                    if (!isSummaryStatus(status)) {
                         liveItem.remove();
                         return;
                     }

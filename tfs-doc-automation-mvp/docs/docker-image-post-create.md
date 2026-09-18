@@ -144,6 +144,8 @@ VS Code tasks and status bar buttons should call this wrapper instead of invokin
 | `CONTENT_AI_TOOLS_REPO_PATH` | `<repos-parent>/CM-AI-Content-Tools` | Writable runtime copy of the tools repository; the pipeline runs from `<path>/tfs-doc-automation-mvp`. |
 | `CONTENT_AI_TOOLS_BRANCH` | `main` | Tools branch to refresh during DevContainer post-create setup when the runtime copy is a Git checkout. |
 | `CONTENT_AI_SETTINGS_PATH` | `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp` | Persistent local settings. |
+| `CONTENT_AI_LEGACY_SETTINGS_PATH` | `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp` | Previous settings folder checked once for an authenticated Copilot CLI state when the persistent root changes. |
+| `CONTENT_AI_COPILOT_CLI_HOST` | empty | Optional GitHub Enterprise host written into the runtime settings; otherwise bootstrap derives it from the authenticated Copilot CLI config. |
 | `CONTENT_AI_APM_VERSION` | `v0.31.0` | APM CLI version installed when `apm` is missing from `PATH`. |
 | `CONTENT_AI_APM_DEPENDENCY` | `jpsmoreira-com/CM-AI-Content-Skills#main` | Dependency written into the generated manifest for a portal that has no committed `apm.yml`; a local `CM-AI-Content-Skills` checkout path works offline. |
 | `CONTENT_AI_APM_INSTALL_CLI` | `true` | `false` fails when `apm` is missing instead of downloading it. |
@@ -164,6 +166,7 @@ VS Code tasks and status bar buttons should call this wrapper instead of invokin
 - Git credentials are restored from and mirrored to the local non-Git settings folder.
 - `.env` and `tfs_dashboard.local.json` are persisted locally but should not contain PATs.
 - Provider authentication should use mounted user state or dashboard-guided setup.
+- Copilot CLI migration copies its private state without printing config contents or tokens.
 
 ## Failure Policy
 

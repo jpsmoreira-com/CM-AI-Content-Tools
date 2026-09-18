@@ -34,6 +34,7 @@ WORKSPACE_CONTEXT_ROOT = ".automation-context/copilot"
 # source repository's location.
 ISOLATED_WORKTREE_DIRNAME = ".content-ai-worktrees"
 VSCODE_BRIDGE_STATUS_FILE = "bridge-status.json"
+PROTECTED_GENERATED_PATH_PREFIXES = ("docs/includes/docsync/",)
 EXECUTION_RUNTIME_DEVCONTAINER = "devcontainer"
 EXECUTION_RUNTIME_WINDOWS_HOST = "windows_host"
 EXECUTION_RUNTIME_OPTIONS = {EXECUTION_RUNTIME_DEVCONTAINER, EXECUTION_RUNTIME_WINDOWS_HOST}
@@ -2356,6 +2357,12 @@ def _validate_commit_file_paths(changed_files: List[str]) -> List[str]:
             raise CopilotIntegrationError(f"Agent result contains an unsafe relative path: {changed_file}")
         if path.startswith(".git/"):
             raise CopilotIntegrationError(f"Agent result contains a Git metadata path that cannot be committed: {changed_file}")
+        if any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in PROTECTED_GENERATED_PATH_PREFIXES):
+            raise CopilotIntegrationError(
+                f"Agent result contains protected generated content that cannot be committed directly: {changed_file}. "
+                "Update the source or generator instead.",
+                code="PROTECTED_GENERATED_CONTENT",
+            )
         if path == WORKSPACE_CONTEXT_ROOT.split("/", 1)[0] or path.startswith(WORKSPACE_CONTEXT_ROOT.split("/", 1)[0] + "/"):
             raise CopilotIntegrationError(
                 f"Agent result contains an automation context path that cannot be committed: {changed_file}",
@@ -2592,6 +2599,16 @@ def commit_and_push_agent_changes(
     )
     if add_result.returncode != 0:
         raise CopilotIntegrationError(add_result.stderr.strip() or add_result.stdout.strip() or "Failed to stage agent changes.")
+
+    staged_result = _run_wsl_script(
+        distro,
+        f"git -C {_shell_quote(workspace_path)} diff --cached --name-only",
+    )
+    if staged_result.returncode != 0:
+        raise CopilotIntegrationError(
+            staged_result.stderr.strip() or staged_result.stdout.strip() or "Failed to inspect staged agent changes."
+        )
+    _validate_commit_file_paths([line for line in staged_result.stdout.splitlines() if line.strip()])
 
     diff_result = _run_wsl_script(
         distro,
@@ -2939,6 +2956,7 @@ def prepare_cm_gpt_handoff(
         "`reviewer_notes`, and optional `error`. "
         "Set `green_light` to true only when the changes are ready to commit and push. "
         "Use repository-relative paths in `changed_files` and do not include this result file. "
+        "Never include or directly edit generated content under `docs/includes/docsync/**`; update its source or generator instead. "
         "`final_report` must explain what changed and why it changed. "
         "`spec_references` must list every spec or reference document used, including the spec path/name, section/topic, and how it informed the change. "
         "`instruction_files_read` must list every repository instruction original path read from the instruction package. "

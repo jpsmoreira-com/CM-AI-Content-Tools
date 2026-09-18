@@ -166,7 +166,9 @@ For VS Code-style providers, the dashboard waits for `agent-result.json` to rema
 
 If a VS Code handoff remains in `waiting` without an `agent-result.json` past the stale-launch grace window, selecting the automatic flow again regenerates the context package and relaunches the VS Code chat. This avoids orphaned waits caused by a previous chat handoff that never actually started or never wrote a result.
 
-When a work item needs to be processed again because new information was added after a previous PR, use `Rerun on New Branch` from the work item detail panel. The rerun creates a fresh branch with a `-rerun-<timestamp>` suffix, clears only the local automation state for the new attempt, ignores older PR links for that rerun, and starts the automatic flow again. Existing PRs remain untouched for comparison and audit history.
+When a work item needs to be processed again because new information was added after a previous PR, use `Create New Work Branch` from the work item detail panel. A branch or PR already associated with the work item is shown as related context and no longer locks the branch plan. The action creates a fresh branch with a `-rerun-<timestamp>` suffix, clears only the local automation state for the new attempt, ignores older PR links for that rerun, and starts the automatic flow again. Existing branches and PRs remain untouched for comparison and audit history. Related implementation branches can also infer the version base branch without becoming the documentation branch used by the pipeline.
+
+If the automatic flow cannot infer a base branch, it persists a `Needs branch plan` state. The dashboard keeps the item in `Work Items Needing Attention` until a reviewer selects and saves the base branch; it does not silently drop the item from the automation summary.
 
 The background runner periodically resumes any persisted automatic flow that has not reached a PR yet. This means the flow does not depend on the browser tab or on the original HTTP request staying alive. When `Continuous Mode` is enabled in Settings, the runner also checks for open current-iteration tasks at the configured discovery interval and starts the automatic flow for newly discovered eligible items.
 
@@ -240,6 +242,8 @@ For Git Credentials authentication inside a devcontainer, provide one of these o
 - `CONTENT_AI_TFS_VERIFY_SSL`, when the devcontainer should override the default internal setting for TFS SSL verification;
 - `CONTENT_AI_TFS_CA_BUNDLE_PATH`, when the devcontainer has a mounted corporate CA bundle that Python `requests` should trust.
 - `CONTENT_AI_SETTINGS_PATH`, when the devcontainer should persist `.env`, `config/tfs_dashboard.local.json`, and the local Git credential store mirror somewhere other than the default `<repos-parent>/.content-ai-settings/tfs-doc-automation-mvp`.
+- `CONTENT_AI_LEGACY_SETTINGS_PATH`, when an authenticated Copilot CLI state must be migrated from an older persistent settings folder.
+- `CONTENT_AI_COPILOT_CLI_HOST`, when Copilot CLI authenticates against a GitHub Enterprise host rather than `https://github.com`.
 - `CONTENT_AI_AUTO_STASH_ON_UPDATE=false`, when DevContainer setup should stop and ask for manual review instead of auto-stashing local tool changes before refreshing the centralized runtime copy.
 
 If those inputs are not configured, open `Settings > Connection` after the dashboard starts and use `TFS Git Credentials Setup`. That setup writes the provided username and token/password through `git credential approve` into the devcontainer user's Git credential store, mirrors the store to `CONTENT_AI_SETTINGS_PATH/git-credentials`, then validates both dashboard credential lookup and `git ls-remote --heads origin`. Host Windows/GCM credentials are not assumed to be available inside Linux containers.
@@ -250,7 +254,7 @@ The bootstrap:
 - restores `CONTENT_AI_SETTINGS_PATH/git-credentials` into the devcontainer user's `~/.git-credentials` when available, then validates or prepares TFS Git credentials when one of the optional credential sources above is configured;
 - writes TFS SSL runtime defaults for the devcontainer. Internal devcontainers default to `DOC_AUTOMATION_TFS_VERIFY_SSL=false` unless `CONTENT_AI_TFS_VERIFY_SSL` is provided;
 - installs Codex CLI and GitHub Copilot CLI into the devcontainer user's npm prefix when `TFS_AUTONOMOUS_INSTALL_CODEX_CLI=true` and `TFS_AUTONOMOUS_INSTALL_GITHUB_COPILOT_CLI=true` respectively, and the executables are missing;
-- migrates the native GitHub Copilot CLI state from `~/.copilot` into `CONTENT_AI_SETTINGS_PATH/copilot-home` and links it back, so an approved device login survives devcontainer recreation;
+- migrates the native GitHub Copilot CLI state from `~/.copilot`, or an authenticated `CONTENT_AI_LEGACY_SETTINGS_PATH/copilot-home`, into `CONTENT_AI_SETTINGS_PATH/copilot-home` and links it back, so an approved device login survives devcontainer recreation; the authenticated Enterprise host is copied into the runtime `.env` without exposing the stored token;
 - installs the pipeline requirements into `~/.venvs/tfs-doc-automation-mvp`;
 - creates a `tfs-autonomous-pipeline` wrapper in `~/.local/bin`;
 - creates local runtime files for the target devcontainer, including `.env` and `config/tfs_dashboard.local.json`;

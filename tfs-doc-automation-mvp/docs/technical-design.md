@@ -333,6 +333,8 @@ A work item can be rerun when new information is added after a previous automati
 The rerun action:
 
 - creates a new branch using the original generated branch name plus `-rerun-<timestamp>`;
+- treats pre-existing documentation and implementation branches as related evidence instead of silently adopting them as the active automation branch;
+- keeps the branch plan editable and offers `Create New Work Branch` when an existing documentation branch or PR would otherwise collide with the planned branch;
 - clears the local branch, agent, push, PR, and report state for the new attempt;
 - marks the item as `rerun_active` so older PR links on the work item or parent do not block this intentional rerun;
 - still detects PRs created from the new rerun branch;
@@ -353,7 +355,7 @@ For the MVP, the dashboard process starts an embedded runner and `run_worker.py`
 
 ### Live Automation Status
 
-The dashboard exposes active work items in a lightweight status panel near the top of the page. It reads the persisted SQLite state only and polls the existing local status endpoint every 10 to 15 seconds while an automatic flow is active. It does not refresh TFS work items or start another worker loop. The displayed message is derived from durable branch, provider, result, push, and Draft PR state, so it remains useful after a dashboard restart and never depends on a transient browser session.
+The dashboard exposes active work items in a lightweight status panel near the top of the page. It reads the persisted SQLite state only and polls the existing local status endpoint every 10 to 15 seconds while an automatic flow is active. It does not refresh TFS work items or start another worker loop. The displayed message is derived from durable branch, provider, result, push, and Draft PR state, so it remains useful after a dashboard restart and never depends on a transient browser session. Items whose base branch cannot be inferred remain visible in a separate `Work Items Needing Attention` group until the reviewer saves a branch plan.
 
 The Draft PR stage is resilient to incomplete agent reporting. When a green-light result has no concise summary, the automatic flow first launches one reporting-only repair session that must update `agent-result.json` without editing repository files. If that repair cannot produce a usable summary, the dashboard creates the Draft PR using a safe summary derived from the final report or the validated changed-files list and records that fallback in the work item event history.
 
@@ -376,7 +378,9 @@ When `CONTENT_AI_SETTINGS_PATH` is configured, the dashboard mirrors `.env`, `co
 
 For portals that use `Git Credentials`, the dashboard writes credentials through `git credential approve`, forces the devcontainer Git helper to `store`, mirrors `~/.git-credentials` to `CONTENT_AI_SETTINGS_PATH/git-credentials`, and restores that file before credential preflight or bootstrap Git operations. This keeps the one-click setup usable after devcontainer rebuilds without storing secrets in the project repository or `.env`. Git author name and email remain a separate preflight requirement before the dashboard can create its commit.
 
-CLI runtime checks are evaluated inside the configured execution runtime, not on the WSL host by assumption. For devcontainers, Node CLI clients (such as Codex CLI and GitHub Copilot CLI) are executed on-demand via `npx` when used by the user, ensuring automatic updates rather than installing fixed global package versions. Codex uses `CODEX_HOME`; GitHub Copilot CLI keeps its native `~/.copilot` state path, which bootstrap links to the persisted Content AI settings location. Runtime tools and authentication state must be available inside the container environment.
+CLI runtime checks are evaluated inside the configured execution runtime, not on the WSL host by assumption. For devcontainers, Node CLI clients (such as Codex CLI and GitHub Copilot CLI) are executed on-demand via `npx` when used by the user, ensuring automatic updates rather than installing fixed global package versions. Codex uses `CODEX_HOME`; GitHub Copilot CLI keeps its native `~/.copilot` state path, which bootstrap links to the persisted Content AI settings location. When the settings root changes, bootstrap migrates an authenticated legacy `copilot-home` before relinking and derives the Enterprise host from its config, or from `CONTENT_AI_COPILOT_CLI_HOST`, without logging credentials. Runtime tools and authentication state must be available inside the container environment.
+
+Generated DocSync output is protected at both instruction and commit boundaries. Agents are told never to edit `docs/includes/docsync/**`, and the push stage rejects both reported and staged paths under that prefix. Changes must target the source content or generator and regenerate the output through the repository workflow.
 
 Current uses:
 

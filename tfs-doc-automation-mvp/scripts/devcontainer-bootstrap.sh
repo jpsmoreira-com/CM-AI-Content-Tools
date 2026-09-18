@@ -20,6 +20,8 @@ PIPELINE_PROJECT_PATH="$CONTENT_AI_TOOLS_REPO_PATH/tfs-doc-automation-mvp"
 PIPELINE_VENV="${TFS_AUTONOMOUS_PIPELINE_VENV:-$HOME/.venvs/tfs-doc-automation-mvp}"
 PIPELINE_PORT="${TFS_AUTONOMOUS_PIPELINE_PORT:-7001}"
 CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_WORKSPACE_ROOT/.content-ai-settings/tfs-doc-automation-mvp}"
+CONTENT_AI_LEGACY_SETTINGS_PATH="${CONTENT_AI_LEGACY_SETTINGS_PATH:-$CONTENT_AI_WORKSPACE_ROOT/.content-ai-settings/tfs-doc-automation-mvp}"
+CONTENT_AI_COPILOT_CLI_HOST="${CONTENT_AI_COPILOT_CLI_HOST:-}"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
 export CODEX_HOME
@@ -214,17 +216,33 @@ ensure_github_copilot_cli() {
   echo "GitHub Copilot CLI will be executed on-demand via npx (@github/copilot@latest) when selected."
 }
 
-ensure_persisted_github_copilot_home() {
-  local persisted_home backup_path timestamp
-  persisted_home="$CONTENT_AI_SETTINGS_PATH/copilot-home"
+copilot_home_is_authenticated() {
+  local home_path="$1"
+  [ -f "$home_path/config.json" ] || return 1
+  grep -Eq '"(lastLoggedInUser|copilotTokens)"[[:space:]]*:' "$home_path/config.json"
+}
 
-  if [ -L "$HOME/.copilot" ]; then
-    return 0
-  fi
+ensure_persisted_github_copilot_home() {
+  local persisted_home legacy_home backup_path timestamp current_target
+  persisted_home="$CONTENT_AI_SETTINGS_PATH/copilot-home"
+  legacy_home="$CONTENT_AI_LEGACY_SETTINGS_PATH/copilot-home"
 
   mkdir -p "$persisted_home"
   chmod 700 "$persisted_home" || true
-  if [ -d "$HOME/.copilot" ]; then
+  if [ "$legacy_home" != "$persisted_home" ] && \
+     copilot_home_is_authenticated "$legacy_home" && \
+     ! copilot_home_is_authenticated "$persisted_home"; then
+    cp -a "$legacy_home/." "$persisted_home/"
+    echo "Migrated the persisted GitHub Copilot CLI session from the legacy settings path."
+  fi
+
+  if [ -L "$HOME/.copilot" ]; then
+    current_target="$(readlink -f "$HOME/.copilot" 2>/dev/null || true)"
+    if [ "$current_target" = "$(readlink -f "$persisted_home")" ]; then
+      return 0
+    fi
+    rm "$HOME/.copilot"
+  elif [ -d "$HOME/.copilot" ]; then
     cp -a "$HOME/.copilot/." "$persisted_home/"
     timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
     backup_path="$HOME/.copilot.local-backup-$timestamp"
@@ -354,6 +372,7 @@ CONTENT_AI_PIPELINE_PROJECT_PATH="$PIPELINE_PROJECT_PATH" \
 CONTENT_AI_SETTINGS_PATH="$CONTENT_AI_SETTINGS_PATH" \
 CONTENT_AI_TARGET_REPOSITORY="$(infer_target_repository)" \
 CONTENT_AI_TARGET_WORKSPACE="$TARGET_WORKSPACE" \
+CONTENT_AI_COPILOT_CLI_HOST="$CONTENT_AI_COPILOT_CLI_HOST" \
 TFS_AUTONOMOUS_PIPELINE_PORT="$PIPELINE_PORT" \
 "$PIPELINE_VENV/bin/python" - <<'PY'
 from __future__ import annotations
@@ -409,17 +428,38 @@ def write_env_values(path: Path, values: dict[str, str]) -> None:
     path.write_text("\n".join(updated_lines).rstrip() + "\n", encoding="utf-8")
 
 
+def read_copilot_host(path: Path) -> str:
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        config = json.loads("\n".join(line for line in raw.splitlines() if not line.lstrip().startswith("//")))
+    except Exception:
+        return ""
+    account = config.get("lastLoggedInUser") or {}
+    host = str(account.get("host") or "").strip().rstrip("/")
+    if host and "://" not in host:
+        host = f"https://{host}"
+    return host
+
+
+runtime_values = {
+    "DOC_AUTOMATION_SERVER_HOST": "0.0.0.0",
+    "DOC_AUTOMATION_SERVER_PORT": pipeline_port,
+    "DOC_AUTOMATION_SERVER_AUTO_PORT": "false",
+    "DOC_AUTOMATION_TFS_VERIFY_SSL": os.environ.get("CONTENT_AI_TFS_VERIFY_SSL", "false"),
+    "DOC_AUTOMATION_TFS_CA_BUNDLE_PATH": os.environ.get("CONTENT_AI_TFS_CA_BUNDLE_PATH", ""),
+    "DOC_AUTOMATION_FINAL_REPORTS_PATH": f"{target_workspace}/.automation-reports",
+    "DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON": json.dumps([target_workspace]),
+}
+copilot_host = os.environ.get("CONTENT_AI_COPILOT_CLI_HOST", "").strip()
+if not copilot_host:
+    copilot_host = read_copilot_host(settings_path / "copilot-home" / "config.json")
+if copilot_host:
+    runtime_values["DOC_AUTOMATION_COPILOT_CLI_HOST"] = copilot_host
+
+
 write_env_values(
     env_path,
-    {
-        "DOC_AUTOMATION_SERVER_HOST": "0.0.0.0",
-        "DOC_AUTOMATION_SERVER_PORT": pipeline_port,
-        "DOC_AUTOMATION_SERVER_AUTO_PORT": "false",
-        "DOC_AUTOMATION_TFS_VERIFY_SSL": os.environ.get("CONTENT_AI_TFS_VERIFY_SSL", "false"),
-        "DOC_AUTOMATION_TFS_CA_BUNDLE_PATH": os.environ.get("CONTENT_AI_TFS_CA_BUNDLE_PATH", ""),
-        "DOC_AUTOMATION_FINAL_REPORTS_PATH": f"{target_workspace}/.automation-reports",
-        "DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON": json.dumps([target_workspace]),
-    },
+    runtime_values,
 )
 shutil.copyfile(env_path, persisted_env_path)
 

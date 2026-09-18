@@ -38,6 +38,8 @@ fi
 CONTENT_AI_TOOLS_REPO_PATH="${CONTENT_AI_TOOLS_REPO_PATH:-$CONTENT_AI_WORKSPACE_ROOT/CM-AI-Content-Tools}"
 CONTENT_AI_TOOLS_BRANCH="${CONTENT_AI_TOOLS_BRANCH:-main}"
 CONTENT_AI_SETTINGS_PATH="${CONTENT_AI_SETTINGS_PATH:-$CONTENT_AI_WORKSPACE_ROOT/.content-ai-settings/tfs-doc-automation-mvp}"
+CONTENT_AI_LEGACY_SETTINGS_PATH="${CONTENT_AI_LEGACY_SETTINGS_PATH:-$CONTENT_AI_WORKSPACE_ROOT/.content-ai-settings/tfs-doc-automation-mvp}"
+CONTENT_AI_COPILOT_CLI_HOST="${CONTENT_AI_COPILOT_CLI_HOST:-}"
 CONTENT_AI_TFS_HOST="${CONTENT_AI_TFS_HOST:-tfs-product.cmf.criticalmanufacturing.com}"
 CONTENT_AI_MARKDOWNLINT_IMAGE="${CONTENT_AI_MARKDOWNLINT_IMAGE:-proxy.criticalmanufacturing.io/davidanson/markdownlint-cli2:v0.12.1}"
 CONTENT_AI_PREPULL_MARKDOWNLINT_IMAGE="${CONTENT_AI_PREPULL_MARKDOWNLINT_IMAGE:-true}"
@@ -251,6 +253,7 @@ write_runtime_files() {
   CONTENT_AI_SETTINGS_PATH="$CONTENT_AI_SETTINGS_PATH" \
   CONTENT_AI_TARGET_REPOSITORY="$target_repository" \
   CONTENT_AI_TARGET_WORKSPACE="$TARGET_WORKSPACE" \
+  CONTENT_AI_COPILOT_CLI_HOST="$CONTENT_AI_COPILOT_CLI_HOST" \
   TFS_AUTONOMOUS_PIPELINE_PORT="$PIPELINE_PORT" \
   "$PIPELINE_PYTHON" - <<'PY'
 from __future__ import annotations
@@ -306,27 +309,48 @@ def write_env_values(path: Path, values: dict[str, str]) -> None:
     path.write_text("\n".join(updated_lines).rstrip() + "\n", encoding="utf-8")
 
 
+def read_copilot_host(path: Path) -> str:
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        config = json.loads("\n".join(line for line in raw.splitlines() if not line.lstrip().startswith("//")))
+    except Exception:
+        return ""
+    account = config.get("lastLoggedInUser") or {}
+    host = str(account.get("host") or "").strip().rstrip("/")
+    if host and "://" not in host:
+        host = f"https://{host}"
+    return host
+
+
+runtime_values = {
+    "DOC_AUTOMATION_SERVER_HOST": "0.0.0.0",
+    "DOC_AUTOMATION_SERVER_PORT": pipeline_port,
+    "DOC_AUTOMATION_SERVER_AUTO_PORT": "false",
+    # Deliberately "false", and deliberately different from
+    # DEFAULT_RUNTIME_SETTINGS in doc_automation/config.py, which is True.
+    # This script also runs outside the CM devcontainer, where the CM root CA is
+    # not in the trust store, and defaulting to verification on would fail every
+    # TFS call with a certificate error in exactly the environments that have no
+    # convenient fix. The caller that can guarantee the CA decides instead:
+    # content-ai-ctl passes CONTENT_AI_TFS_VERIFY_SSL=true, because the image it
+    # starts trusts the CM root CA OS-wide and exports REQUESTS_CA_BUNDLE.
+    # Do not "fix" this to true — the safe-looking change breaks host use.
+    "DOC_AUTOMATION_TFS_VERIFY_SSL": os.environ.get("CONTENT_AI_TFS_VERIFY_SSL", "false"),
+    "DOC_AUTOMATION_TFS_CA_BUNDLE_PATH": os.environ.get("CONTENT_AI_TFS_CA_BUNDLE_PATH", ""),
+    "DOC_AUTOMATION_EXECUTION_RUNTIME": "devcontainer",
+    "DOC_AUTOMATION_FINAL_REPORTS_PATH": f"{target_workspace}/.automation-reports",
+    "DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON": json.dumps([target_workspace]),
+}
+copilot_host = os.environ.get("CONTENT_AI_COPILOT_CLI_HOST", "").strip()
+if not copilot_host:
+    copilot_host = read_copilot_host(settings_path / "copilot-home" / "config.json")
+if copilot_host:
+    runtime_values["DOC_AUTOMATION_COPILOT_CLI_HOST"] = copilot_host
+
+
 write_env_values(
     env_path,
-    {
-        "DOC_AUTOMATION_SERVER_HOST": "0.0.0.0",
-        "DOC_AUTOMATION_SERVER_PORT": pipeline_port,
-        "DOC_AUTOMATION_SERVER_AUTO_PORT": "false",
-        # Deliberately "false", and deliberately different from
-        # DEFAULT_RUNTIME_SETTINGS in doc_automation/config.py, which is True.
-        # This script also runs outside the CM devcontainer, where the CM root CA is
-        # not in the trust store, and defaulting to verification on would fail every
-        # TFS call with a certificate error in exactly the environments that have no
-        # convenient fix. The caller that can guarantee the CA decides instead:
-        # content-ai-ctl passes CONTENT_AI_TFS_VERIFY_SSL=true, because the image it
-        # starts trusts the CM root CA OS-wide and exports REQUESTS_CA_BUNDLE.
-        # Do not "fix" this to true — the safe-looking change breaks host use.
-        "DOC_AUTOMATION_TFS_VERIFY_SSL": os.environ.get("CONTENT_AI_TFS_VERIFY_SSL", "false"),
-        "DOC_AUTOMATION_TFS_CA_BUNDLE_PATH": os.environ.get("CONTENT_AI_TFS_CA_BUNDLE_PATH", ""),
-        "DOC_AUTOMATION_EXECUTION_RUNTIME": "devcontainer",
-        "DOC_AUTOMATION_FINAL_REPORTS_PATH": f"{target_workspace}/.automation-reports",
-        "DOC_AUTOMATION_CONTEXT_CAPTURE_WORKSPACE_SCAN_ROOTS_JSON": json.dumps([target_workspace]),
-    },
+    runtime_values,
 )
 shutil.copyfile(env_path, persisted_env_path)
 
@@ -454,17 +478,33 @@ check_codex_cli() {
   fi
 }
 
-ensure_persisted_github_copilot_home() {
-  local persisted_home backup_path timestamp
-  persisted_home="$CONTENT_AI_SETTINGS_PATH/copilot-home"
+copilot_home_is_authenticated() {
+  local home_path="$1"
+  [ -f "$home_path/config.json" ] || return 1
+  grep -Eq '"(lastLoggedInUser|copilotTokens)"[[:space:]]*:' "$home_path/config.json"
+}
 
-  if [ -L "$HOME/.copilot" ]; then
-    return 0
-  fi
+ensure_persisted_github_copilot_home() {
+  local persisted_home legacy_home backup_path timestamp current_target
+  persisted_home="$CONTENT_AI_SETTINGS_PATH/copilot-home"
+  legacy_home="$CONTENT_AI_LEGACY_SETTINGS_PATH/copilot-home"
 
   mkdir -p "$persisted_home"
   chmod 700 "$persisted_home" || true
-  if [ -d "$HOME/.copilot" ]; then
+  if [ "$legacy_home" != "$persisted_home" ] && \
+     copilot_home_is_authenticated "$legacy_home" && \
+     ! copilot_home_is_authenticated "$persisted_home"; then
+    cp -a "$legacy_home/." "$persisted_home/"
+    log "Migrated the persisted GitHub Copilot CLI session from the legacy settings path."
+  fi
+
+  if [ -L "$HOME/.copilot" ]; then
+    current_target="$(readlink -f "$HOME/.copilot" 2>/dev/null || true)"
+    if [ "$current_target" = "$(readlink -f "$persisted_home")" ]; then
+      return 0
+    fi
+    rm "$HOME/.copilot"
+  elif [ -d "$HOME/.copilot" ]; then
     cp -a "$HOME/.copilot/." "$persisted_home/"
     timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
     backup_path="$HOME/.copilot.local-backup-$timestamp"
@@ -629,11 +669,11 @@ target_repository="$(infer_target_repository)"
 log "Target repository: $target_repository"
 
 configure_tfs_git_credentials
+ensure_persisted_github_copilot_home
 write_runtime_files "$target_repository"
 sync_content_ai_assets
 prepare_docker_config
 check_codex_cli
-ensure_persisted_github_copilot_home
 ensure_github_copilot_cli
 install_vscode_copilot_bridge
 write_wrappers

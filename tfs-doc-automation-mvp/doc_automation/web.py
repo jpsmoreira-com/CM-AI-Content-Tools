@@ -211,30 +211,42 @@ def dashboard(
         page=page,
         page_size=page_size,
     )
-    active_automation_items = [
+    automation_summary_items = [
         item
         for item in list(context.get("items") or [])
         if bool(item.get("is_auto_flow_active"))
+        or str(item.get("auto_flow_runtime_status") or "") == "needs_plan"
     ]
-    active_automation = SERVICE.get_local_status_snapshots(
+    automation_summary = SERVICE.get_local_status_snapshots(
         portal_name=str(context.get("selected_portal") or portal),
-        work_item_ids=[int(item["id"]) for item in active_automation_items],
+        work_item_ids=[int(item["id"]) for item in automation_summary_items],
     )
-    active_item_titles = {
+    automation_item_titles = {
         int(item["id"]): str(item.get("title") or "Work item")
-        for item in active_automation_items
+        for item in automation_summary_items
     }
-    for active_item in active_automation:
-        active_item["title"] = active_item_titles.get(int(active_item["id"]), "Work item")
+    for summary_item in automation_summary:
+        summary_item["title"] = automation_item_titles.get(int(summary_item["id"]), "Work item")
+    attention_automation = [
+        item
+        for item in automation_summary
+        if str(item.get("auto_flow_runtime_status") or "") == "needs_plan"
+    ]
     queued_automation = [
-        item for item in active_automation if str(item.get("auto_flow_runtime_status") or "") == "queued"
+        item
+        for item in automation_summary
+        if bool(item.get("is_auto_flow_active"))
+        and str(item.get("auto_flow_runtime_status") or "") == "queued"
     ]
     in_progress_automation = [
-        item for item in active_automation if item not in queued_automation
+        item
+        for item in automation_summary
+        if bool(item.get("is_auto_flow_active")) and item not in queued_automation
     ]
+    active_automation_count = len(in_progress_automation) + len(queued_automation)
     runtime_settings = context.get("runtime_settings") or {}
     auto_refresh_seconds = 0
-    if active_automation and bool(runtime_settings.get("automation_runner_enabled")):
+    if active_automation_count and bool(runtime_settings.get("automation_runner_enabled")):
         auto_refresh_seconds = max(
             10,
             min(15, int(runtime_settings.get("automation_reconcile_interval_seconds") or 15)),
@@ -247,8 +259,10 @@ def dashboard(
             "level": level,
             "active_page": "dashboard",
             "automation_runner": ORCHESTRATOR.snapshot(),
-            "active_automation": active_automation,
-            "active_automation_count": len(active_automation),
+            "active_automation": automation_summary,
+            "active_automation_count": active_automation_count,
+            "automation_summary_count": len(automation_summary),
+            "attention_automation": attention_automation,
             "queued_automation": queued_automation,
             "in_progress_automation": in_progress_automation,
             "auto_refresh_seconds": auto_refresh_seconds,
