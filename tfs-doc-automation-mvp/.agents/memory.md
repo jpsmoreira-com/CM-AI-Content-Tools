@@ -1015,3 +1015,12 @@ Next recommended tasks:
 - The runtime contract is now two sibling checkouts: the tools repository at `CONTENT_AI_TOOLS_REPO_PATH` (default `/workspaces/CM-AI-Content-Tools`, image seed `CONTENT_AI_TOOLS_IMAGE_REPO_PATH=/opt/content-ai/CM-AI-Content-Tools`, branch `CONTENT_AI_TOOLS_BRANCH`) and the shared-assets repository at `CONTENT_AI_REPO_PATH` (default `/workspaces/CM-AI-Content-Skills`, unchanged). `PIPELINE_PROJECT_PATH` is `$CONTENT_AI_TOOLS_REPO_PATH/tfs-doc-automation-mvp`.
 - `content-ai-post-create.sh` seeds and refreshes both runtime copies from their image seeds (`ensure_runtime_copy`), `devcontainer-bootstrap.sh` clones or fast-forwards both (`sync_git_checkout`, requiring `CONTENT_AI_TOOLS_REPO_URL` / `CONTENT_AI_REPO_URL` only for a first clone), and `sync-content-ai-assets.sh` no longer derives the asset root from its own location; it uses `CONTENT_AI_REPO_PATH` and fails early when no `skills/` folder is there.
 - Docker image builders must now copy both repositories into `/opt/content-ai/` and point `content-ai-post-create` at `CM-AI-Content-Tools/tfs-doc-automation-mvp/scripts/content-ai-post-create.sh`. Target devcontainers should add `CONTENT_AI_TOOLS_REPO_PATH` and `CONTENT_AI_TOOLS_IMAGE_REPO_PATH` to `remoteEnv`.
+
+2026-09-18 Branch planning, Copilot persistence, and generated-content safety:
+
+- A branch found by WI ID is related evidence, not automatically the active automation branch. Related branch versions can infer the configured base branch, while the branch plan remains editable.
+- When the planned documentation branch already exists, the detail panel offers `Create New Work Branch`; reruns keep the existing branch and PR untouched.
+- Missing base-branch inference is persisted as `needs_plan` and remains visible under `Work Items Needing Attention` instead of disappearing from the automation summary.
+- Draft PR creation now requires the exact planned branch and never falls back to another branch that merely contains the WI ID.
+- Post-create/bootstrap can migrate an authenticated Copilot CLI state from `CONTENT_AI_LEGACY_SETTINGS_PATH` into the current persistent settings folder and derive the Enterprise host without logging credentials.
+- The shared agent prompt and commit validation protect `docs/includes/docsync/**`; changes must be made through source content or its generator.

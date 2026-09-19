@@ -211,30 +211,42 @@ def dashboard(
         page=page,
         page_size=page_size,
     )
-    active_automation_items = [
+    automation_summary_items = [
         item
         for item in list(context.get("items") or [])
         if bool(item.get("is_auto_flow_active"))
+        or str(item.get("auto_flow_runtime_status") or "") == "needs_plan"
     ]
-    active_automation = SERVICE.get_local_status_snapshots(
+    automation_summary = SERVICE.get_local_status_snapshots(
         portal_name=str(context.get("selected_portal") or portal),
-        work_item_ids=[int(item["id"]) for item in active_automation_items],
+        work_item_ids=[int(item["id"]) for item in automation_summary_items],
     )
-    active_item_titles = {
+    automation_item_titles = {
         int(item["id"]): str(item.get("title") or "Work item")
-        for item in active_automation_items
+        for item in automation_summary_items
     }
-    for active_item in active_automation:
-        active_item["title"] = active_item_titles.get(int(active_item["id"]), "Work item")
+    for summary_item in automation_summary:
+        summary_item["title"] = automation_item_titles.get(int(summary_item["id"]), "Work item")
+    attention_automation = [
+        item
+        for item in automation_summary
+        if str(item.get("auto_flow_runtime_status") or "") == "needs_plan"
+    ]
     queued_automation = [
-        item for item in active_automation if str(item.get("auto_flow_runtime_status") or "") == "queued"
+        item
+        for item in automation_summary
+        if bool(item.get("is_auto_flow_active"))
+        and str(item.get("auto_flow_runtime_status") or "") == "queued"
     ]
     in_progress_automation = [
-        item for item in active_automation if item not in queued_automation
+        item
+        for item in automation_summary
+        if bool(item.get("is_auto_flow_active")) and item not in queued_automation
     ]
+    active_automation_count = len(in_progress_automation) + len(queued_automation)
     runtime_settings = context.get("runtime_settings") or {}
     auto_refresh_seconds = 0
-    if active_automation and bool(runtime_settings.get("automation_runner_enabled")):
+    if active_automation_count and bool(runtime_settings.get("automation_runner_enabled")):
         auto_refresh_seconds = max(
             10,
             min(15, int(runtime_settings.get("automation_reconcile_interval_seconds") or 15)),
@@ -247,8 +259,10 @@ def dashboard(
             "level": level,
             "active_page": "dashboard",
             "automation_runner": ORCHESTRATOR.snapshot(),
-            "active_automation": active_automation,
-            "active_automation_count": len(active_automation),
+            "active_automation": automation_summary,
+            "active_automation_count": active_automation_count,
+            "automation_summary_count": len(automation_summary),
+            "attention_automation": attention_automation,
             "queued_automation": queued_automation,
             "in_progress_automation": in_progress_automation,
             "auto_refresh_seconds": auto_refresh_seconds,
@@ -713,8 +727,8 @@ def save_runtime_settings(
     execution_runtime: str = Form("devcontainer"),
     copilot_wsl_distro: str = Form("Ubuntu"),
     copilot_provider: str = Form("vscode_bridge"),
-    copilot_model_name: str = Form("CM GPT"),
-    copilot_agent_name: str = Form("CM GPT"),
+    copilot_model_name: str = Form(""),
+    copilot_agent_name: str = Form(DEFAULT_RUNTIME_SETTINGS["copilot_agent_name"]),
     copilot_cli_host: str = Form("https://github.com"),
     copilot_auto_launch: bool = Form(False),
     copilot_prompt_template: str = Form(""),
@@ -1130,20 +1144,20 @@ def launch_copilot_session(
         tracked_changes = list(result.get("tracked_changes") or [])
         if tracked_changes:
             message = (
-                f"WI {work_item_id}: CM GPT {action_label} for branch '{result['branch_name']}'. "
+                f"WI {work_item_id}: configured agent {action_label} for branch '{result['branch_name']}'. "
                 f"Tracked repo changes were detected."
             )
             result_level = "success"
         else:
             message = (
-                f"WI {work_item_id}: CM GPT {action_label} for branch '{result['branch_name']}'. "
+                f"WI {work_item_id}: configured agent {action_label} for branch '{result['branch_name']}'. "
                 "Waiting for agent-result.json green light; the automatic worker will push and create the draft PR when it is ready."
             )
             result_level = "success"
         if result.get("prompt_path") and result["status"] == "prepared":
             message = (
-                f"WI {work_item_id}: CM GPT handoff prepared for branch '{result['branch_name']}'. "
-                f"Verify the active model is CM GPT, then run the generated prompt at {result['prompt_path']}."
+                f"WI {work_item_id}: agent handoff prepared for branch '{result['branch_name']}'. "
+                f"Verify the configured agent and model, then run the generated prompt at {result['prompt_path']}."
             )
             result_level = "warning"
         return _redirect_to_dashboard(
@@ -1162,7 +1176,7 @@ def launch_copilot_session(
             iteration_path=iteration_path,
             current_iteration_only=_parse_optional_bool(current_iteration_only),
             hide_closed=_parse_optional_bool(hide_closed),
-            message=f"Failed to run CM GPT automation for WI {work_item_id}: {exc}",
+            message=f"Failed to run agent automation for WI {work_item_id}: {exc}",
             level="error",
         )
 

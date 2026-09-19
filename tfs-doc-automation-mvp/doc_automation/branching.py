@@ -80,6 +80,19 @@ def normalize_branch_name(value: str) -> str:
     return branch_name.strip("/")
 
 
+def infer_base_branch_from_related_branch(branch_name: str, branch_chain: Iterable[str]) -> str:
+    """Resolve a configured base branch from a related implementation or documentation branch."""
+    prefix = version_prefix_from_branch(normalize_branch_name(branch_name))
+    if not prefix or not re.fullmatch(r"\d+\.\d+", prefix):
+        return ""
+    expected = f"{prefix}/dev"
+    for branch in branch_chain:
+        normalized = str(branch or "").replace("refs/heads/", "").strip()
+        if normalized.lower() == expected.lower():
+            return normalized
+    return ""
+
+
 def merge_branch_plan(
     work_item: Dict[str, object],
     branch_chain: Iterable[str],

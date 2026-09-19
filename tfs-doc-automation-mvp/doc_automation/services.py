@@ -17,7 +17,13 @@ import zipfile
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote, urlencode, urljoin, urlparse
 
-from .branching import WORK_TYPES, merge_branch_plan, normalize_branch_name, version_prefix_from_branch
+from .branching import (
+    WORK_TYPES,
+    infer_base_branch_from_related_branch,
+    merge_branch_plan,
+    normalize_branch_name,
+    version_prefix_from_branch,
+)
 from .cherry_picks import (
     SCOPE_FILTERS,
     SORT_OPTIONS,
@@ -34,7 +40,7 @@ from .copilot import (
     get_windows_user_agent_directory,
     inspect_agent_result_file,
     normalize_wsl_target_path,
-    prepare_cm_gpt_handoff,
+    prepare_agent_handoff,
     read_agent_result,
     read_agent_provider_status,
     read_wsl_text_file,
@@ -76,6 +82,7 @@ from .storage import (
     mark_agent_result,
     mark_agent_repair_started,
     mark_auto_flow_enabled,
+    mark_auto_flow_needs_plan,
     mark_auto_flow_runtime_status,
     mark_branch_result,
     mark_copilot_result,
@@ -1101,6 +1108,78 @@ def branch_matches_work_item(branch_name: str, work_item_id: int) -> bool:
     return bool(std_re.search(pattern, branch_name))
 
 
+def apply_reference_branch_context(
+    item: Dict[str, Any],
+    reference_branch_name: str,
+    branch_chain: List[str],
+) -> None:
+    reference_branch = normalize_branch_name(reference_branch_name)
+    item["reference_branch_name"] = reference_branch
+    if not reference_branch:
+        item["planned_branch_conflict"] = False
+        return
+
+    if not str(item.get("selected_base_branch") or "").strip():
+        inferred_base_branch = infer_base_branch_from_related_branch(reference_branch, branch_chain)
+        if inferred_base_branch:
+            item["inferred_base_branch"] = inferred_base_branch
+            item["selected_base_branch"] = inferred_base_branch
+            plan_can_be_regenerated = (
+                not bool(item.get("plan_persisted"))
+                or str(item.get("auto_flow_runtime_status") or "").strip().lower() == "needs_plan"
+            )
+            if plan_can_be_regenerated:
+                refreshed_plan = merge_branch_plan(
+                    item,
+                    branch_chain,
+                    {
+                        "selected_base_branch": inferred_base_branch,
+                        "work_type": str(item.get("selected_work_type") or item.get("inferred_work_type") or "task"),
+                    },
+                )
+                item.update(refreshed_plan)
+
+    item["planned_branch_conflict"] = (
+        normalize_branch_name(str(item.get("branch_name") or "")).lower() == reference_branch.lower()
+    )
+
+
+def apply_work_item_action_flags(item: Dict[str, Any]) -> None:
+    has_branch = bool(item.get("has_branch"))
+    has_pr = bool(item.get("has_pr"))
+    pushed = str(item.get("push_status") or "").strip().lower() == "pushed"
+    agent_green = str(item.get("agent_result_status") or "").strip().lower() in {
+        "green_light",
+        "ready_for_push",
+        "success",
+    }
+    plan_conflict = bool(item.get("planned_branch_conflict"))
+
+    item["can_create_branch"] = (
+        bool(item.get("selected_base_branch"))
+        and not has_branch
+        and not has_pr
+        and not plan_conflict
+    )
+    item["can_check_agent_result"] = bool(item.get("agent_result_path")) and has_branch and not has_pr
+    item["can_commit_push"] = bool(agent_green and has_branch and not pushed and not has_pr)
+    item["can_create_draft_pr"] = bool(item.get("selected_base_branch")) and has_branch and pushed and not has_pr
+    item["can_launch_copilot"] = bool(item.get("copilot_workspace_path")) and has_branch and not has_pr
+    item["can_start_rerun"] = bool(item.get("selected_base_branch")) and (
+        has_pr or pushed or has_branch or plan_conflict
+    )
+    item["create_branch_action_label"] = (
+        "Create New Work Branch" if item.get("reference_branch_name") else "Create Work Branch"
+    )
+    item["new_branch_action_label"] = (
+        "Create New Work Branch" if plan_conflict or has_pr else "Rerun on New Branch"
+    )
+    item["plan_locked"] = has_branch or pushed or bool(item.get("auto_flow_enabled"))
+    item["progress_steps"] = build_progress_steps(item)
+    item["stage_label"] = summarize_automation_stage(item)
+    item["is_auto_flow_active"] = is_auto_flow_active(item)
+
+
 def choose_branch_candidate(
     branches: List[str],
     *,
@@ -1321,6 +1400,8 @@ def build_progress_steps(item: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 def summarize_automation_stage(item: Dict[str, Any]) -> str:
+    if str(item.get("auto_flow_runtime_status") or "").strip().lower() == "needs_plan":
+        return "Needs branch plan"
     if item.get("has_pr"):
         return "In review"
     if str(item.get("push_status") or "").strip().lower() == "pushed":
@@ -2363,7 +2444,10 @@ class AutomationService:
             "rerun_active": bool((state or {}).get("rerun_active")),
             "rerun_started_at": str((state or {}).get("rerun_started_at") or ""),
             "auto_flow_enabled": bool((state or {}).get("auto_flow_enabled")),
+            "auto_flow_runtime_status": str((state or {}).get("auto_flow_runtime_status") or ""),
+            "auto_flow_runtime_message": str((state or {}).get("auto_flow_runtime_message") or ""),
             "state_updated_at": str((state or {}).get("updated_at") or ""),
+            "plan_persisted": bool(state),
             "changed_label": changed_label,
             "description_preview": description_preview[:280],
             "acceptance_preview": acceptance_preview[:280],
@@ -2406,6 +2490,8 @@ class AutomationService:
             "pr_source_branch": "",
             "pr_match_source": "",
             "pr_link_label": build_pr_link_label(pr_status),
+            "reference_branch_name": "",
+            "planned_branch_conflict": False,
             **state_style,
             "work_type_options": WORK_TYPES,
             "is_locked": branch_status in {"created", "exists"} or bool((state or {}).get("pr_id")),
@@ -2504,7 +2590,7 @@ class AutomationService:
 
                 stored_branch_status = str(item.get("branch_status") or "")
                 has_branch = bool(
-                    stored_branch_status in {"created", "exists", "detected"}
+                    stored_branch_status in {"created", "exists"}
                     and item.get("branch_name")
                 )
                 rerun_active = bool(item.get("rerun_active"))
@@ -2524,22 +2610,17 @@ class AutomationService:
                     item["pr_match_source"] = "parent-link"
                     has_pr = True
 
+                linked_branch = ""
+                if linked_work_item_prs:
+                    linked_branch = str(linked_work_item_prs[0].get("sourceRefName") or "")
+                elif linked_parent_prs:
+                    linked_branch = str(linked_parent_prs[0].get("sourceRefName") or "")
+                apply_reference_branch_context(item, linked_branch, list(portal.get("branch_chain", []) or []))
                 item["effective_branch_name"] = str(item.get("branch_name") or "") if has_branch else ""
                 item["has_branch"] = has_branch
                 item["has_pr"] = has_pr
                 item["pr_link_label"] = build_pr_link_label(str(item.get("pr_status") or ""))
-                agent_green = str(item.get("agent_result_status") or "").strip().lower() in {"green_light", "ready_for_push", "success"}
-                pushed = str(item.get("push_status") or "").strip().lower() == "pushed"
-                item["can_create_branch"] = bool(item.get("selected_base_branch")) and not has_branch and not has_pr
-                item["can_check_agent_result"] = bool(item.get("agent_result_path")) and has_branch and not has_pr
-                item["can_commit_push"] = bool(agent_green and has_branch and not pushed and not has_pr)
-                item["can_create_draft_pr"] = bool(item.get("selected_base_branch")) and has_branch and pushed and not has_pr
-                item["can_launch_copilot"] = bool(item.get("copilot_workspace_path")) and has_branch and not has_pr
-                item["can_start_rerun"] = bool(item.get("selected_base_branch")) and (has_pr or pushed or bool(item.get("branch_name")))
-                item["plan_locked"] = has_branch or has_pr
-                item["progress_steps"] = build_progress_steps(item)
-                item["stage_label"] = summarize_automation_stage(item)
-                item["is_auto_flow_active"] = is_auto_flow_active(item)
+                apply_work_item_action_flags(item)
             return items
 
         client, repository_id = self._load_repository_context(portal)
@@ -2556,18 +2637,7 @@ class AutomationService:
                 item["has_branch"] = has_branch
                 item["has_pr"] = has_pr
                 item["pr_link_label"] = build_pr_link_label(str(item.get("pr_status") or ""))
-                agent_green = str(item.get("agent_result_status") or "").strip().lower() in {"green_light", "ready_for_push", "success"}
-                pushed = str(item.get("push_status") or "").strip().lower() == "pushed"
-                item["can_create_branch"] = bool(item.get("selected_base_branch")) and not has_branch and not has_pr
-                item["can_check_agent_result"] = bool(item.get("agent_result_path")) and has_branch and not has_pr
-                item["can_commit_push"] = bool(agent_green and has_branch and not pushed and not has_pr)
-                item["can_create_draft_pr"] = bool(item.get("selected_base_branch")) and has_branch and pushed and not has_pr
-                item["can_launch_copilot"] = bool(item.get("copilot_workspace_path")) and has_branch and not has_pr
-                item["can_start_rerun"] = bool(item.get("selected_base_branch")) and (has_pr or pushed or bool(item.get("branch_name")))
-                item["plan_locked"] = has_branch or has_pr
-                item["progress_steps"] = build_progress_steps(item)
-                item["stage_label"] = summarize_automation_stage(item)
-                item["is_auto_flow_active"] = is_auto_flow_active(item)
+                apply_work_item_action_flags(item)
             return items
 
         refs_cache: Dict[str, List[str]] = {}
@@ -2621,6 +2691,12 @@ class AutomationService:
                 item["pr_match_source"] = "parent-link"
                 has_pr = True
 
+            linked_branch_name = ""
+            if linked_target_work_item_prs:
+                linked_branch_name = str(linked_target_work_item_prs[0].get("sourceRefName") or "")
+            elif linked_target_parent_prs:
+                linked_branch_name = str(linked_target_parent_prs[0].get("sourceRefName") or "")
+
             remote_branch_name = ""
             stored_branch_exists = stored_branch_status in {"created", "exists"}
             effective_branch_name = stored_branch_name if stored_branch_exists else ""
@@ -2640,12 +2716,13 @@ class AutomationService:
                         refs_cache,
                         list(portal.get("branch_chain", []) or []),
                     )
-                effective_branch_name = remote_branch_name or effective_branch_name
-                has_branch = bool(effective_branch_name) and (
-                    stored_branch_status in {"created", "exists"} or bool(remote_branch_name)
-                )
-                if remote_branch_name and stored_branch_status not in {"created", "exists"}:
-                    item["branch_status"] = "detected"
+
+            reference_branch_name = remote_branch_name or linked_branch_name
+            apply_reference_branch_context(
+                item,
+                reference_branch_name,
+                list(portal.get("branch_chain", []) or []),
+            )
 
             item["effective_branch_name"] = effective_branch_name
             item["has_branch"] = has_branch
@@ -2696,18 +2773,7 @@ class AutomationService:
 
             item["has_pr"] = has_pr
             item["pr_link_label"] = build_pr_link_label(str(item.get("pr_status") or ""))
-            agent_green = str(item.get("agent_result_status") or "").strip().lower() in {"green_light", "ready_for_push", "success"}
-            pushed = str(item.get("push_status") or "").strip().lower() == "pushed"
-            item["can_create_branch"] = bool(item.get("selected_base_branch")) and not has_branch and not has_pr
-            item["can_check_agent_result"] = bool(item.get("agent_result_path")) and has_branch and not has_pr
-            item["can_commit_push"] = bool(agent_green and has_branch and not pushed and not has_pr)
-            item["can_create_draft_pr"] = bool(item.get("selected_base_branch")) and has_branch and pushed and not has_pr
-            item["can_launch_copilot"] = bool(item.get("copilot_workspace_path")) and has_branch and not has_pr
-            item["can_start_rerun"] = bool(item.get("selected_base_branch")) and (has_pr or pushed or bool(item.get("branch_name")))
-            item["plan_locked"] = has_branch or has_pr
-            item["progress_steps"] = build_progress_steps(item)
-            item["stage_label"] = summarize_automation_stage(item)
-            item["is_auto_flow_active"] = is_auto_flow_active(item)
+            apply_work_item_action_flags(item)
 
         return items
 
@@ -3180,7 +3246,7 @@ class AutomationService:
                 "id": int(work_item_id),
                 "selected_base_branch": str(state.get("selected_base_branch") or ""),
                 "branch_status": branch_status,
-                "has_branch": branch_status in {"created", "exists", "detected"},
+                "has_branch": branch_status in {"created", "exists"},
                 "has_pr": pr_status in {"created", "exists"},
                 "auto_flow_enabled": bool(state.get("auto_flow_enabled")),
                 "copilot_status": str(state.get("copilot_status") or ""),
@@ -3466,6 +3532,7 @@ class AutomationService:
                     cli_command_template=str(runtime_settings.get("copilot_cli_command_template") or "").strip(),
                     workspace_path=workspace_path,
                     model_name=str(runtime_settings.get("copilot_model_name") or "").strip(),
+                    agent_name=str(runtime_settings.get("copilot_agent_name") or "").strip(),
                 )
                 message = str(preflight.get("message") or "").lower()
                 if (
@@ -3675,11 +3742,27 @@ class AutomationService:
             triage_status = str(item.get("triage_status") or "pending")
 
             if not selected_base_branch:
+                blocked_message = (
+                    "Select a base branch before starting the automatic flow. "
+                    "Related branches remain available as context and do not lock the plan."
+                )
+                mark_auto_flow_needs_plan(
+                    portal=portal_name,
+                    work_item_id=work_item_id,
+                    iteration_path=iteration_path or str(item.get("iteration_path") or ""),
+                    triage_status=triage_status,
+                    work_type=selected_work_type,
+                    branch_name=str(item.get("branch_name") or ""),
+                    reviewer_display_name=str(item.get("reviewer_display_name") or ""),
+                    reviewer_unique_name=str(item.get("reviewer_unique_name") or ""),
+                    reviewer_id=str(item.get("reviewer_id") or ""),
+                    message=blocked_message,
+                )
                 results.append(
                     {
                         "work_item_id": work_item_id,
                         "status": "needs-plan",
-                        "detail": "No base branch is selected for this work item.",
+                        "detail": blocked_message,
                     }
                 )
                 continue
@@ -3913,24 +3996,9 @@ class AutomationService:
             raise ServiceError(f"WI {work_item_id} already has an associated PR.")
         client = self._build_client(portal)
         repository_id = self._get_repository_id_cached(portal_name, client)
-        refs_cache: Dict[str, List[str]] = {}
-        if current_item.get("rerun_active"):
-            exact_ref = client.get_ref(repository_id, str(plan["branch_name"]))
-            existing_branch_name = str(plan["branch_name"]) if exact_ref else ""
-        else:
-            existing_branch_name = self._detect_existing_branch_name(
-                client,
-                portal_name,
-                repository_id,
-                str(plan["branch_name"]),
-                str(plan["selected_base_branch"]),
-                str(plan["selected_work_type"]),
-                int(work_item_id),
-                refs_cache,
-                list(portal.get("branch_chain", []) or []),
-            )
+        exact_ref = client.get_ref(repository_id, str(plan["branch_name"]))
+        existing_branch_name = str(plan["branch_name"]) if exact_ref else ""
         if existing_branch_name:
-            existing_ref = client.get_ref(repository_id, existing_branch_name)
             mark_branch_result(
                 portal=portal_name,
                 work_item_id=work_item_id,
@@ -3942,7 +4010,7 @@ class AutomationService:
             return {
                 "status": "exists",
                 "name": str(existing_branch_name),
-                "object_id": str((existing_ref or {}).get("objectId", "")),
+                "object_id": str((exact_ref or {}).get("objectId", "")),
             }
         try:
             result = client.create_branch(
@@ -4011,30 +4079,10 @@ class AutomationService:
         target_branch = str(plan["selected_base_branch"])
         source_ref = client.get_ref(repository_id, source_branch)
         if not source_ref:
-            refs_cache: Dict[str, List[str]] = {}
-            detected_branch_name = self._detect_existing_branch_name(
-                client,
-                portal_name,
-                repository_id,
-                source_branch,
-                target_branch,
-                str(plan["selected_work_type"]),
-                int(work_item_id),
-                refs_cache,
-                list(portal.get("branch_chain", []) or []),
+            raise ServiceError(
+                f"The planned work branch '{source_branch}' was not found. "
+                "Create or select a new work branch before creating the draft PR."
             )
-            if detected_branch_name:
-                source_branch = detected_branch_name
-                source_ref = client.get_ref(repository_id, source_branch)
-                mark_branch_result(
-                    portal=portal_name,
-                    work_item_id=work_item_id,
-                    branch_name=source_branch,
-                    branch_status="exists",
-                    branch_error="",
-                )
-        if not source_ref:
-            raise ServiceError("Create the work branch before creating the draft PR.")
 
         existing_pr = client.find_pull_request(
             repository_id,
@@ -4452,7 +4500,7 @@ class AutomationService:
 
         effective_branch_name = str(current_item.get("effective_branch_name") or plan.get("branch_name") or "").strip()
         if not current_item.get("has_branch") or not effective_branch_name:
-            raise ServiceError("Create or detect the work branch before launching CM GPT.")
+            raise ServiceError("Create or detect the work branch before launching the configured agent.")
 
         runtime_settings = load_runtime_settings()
         workspace_path = str(portal.get("copilot_workspace_path") or "").strip()
@@ -4498,7 +4546,7 @@ class AutomationService:
             )
 
         if not auto_launch:
-            error_message = "CM GPT automatic execution is disabled. Enable Run Executor Automatically before running the pipeline."
+            error_message = "Automatic agent execution is disabled. Enable Run Executor Automatically before running the pipeline."
             mark_copilot_result(
                 portal=portal_name,
                 work_item_id=work_item_id,
@@ -4513,8 +4561,8 @@ class AutomationService:
 
         if provider in {"vscode", "vscode_bridge"} and strict_model_safety:
             error_message = (
-                "Strict CM GPT Safety Mode prepares context only and does not run automatic edits. "
-                "Disable it only for temporary end-to-end testing or when VS Code Copilot can enforce the approved CM GPT model for this workspace."
+                "Preparation-Only Mode creates the context package but does not run automatic edits. "
+                "Disable it when the configured provider is ready to enforce the selected agent and model."
             )
             mark_copilot_result(
                 portal=portal_name,
@@ -4572,7 +4620,7 @@ class AutomationService:
 
         try:
             with execution_runtime_scope(execution_runtime):
-                result = prepare_cm_gpt_handoff(
+                result = prepare_agent_handoff(
                     distro=distro,
                     workspace_path=workspace_path,
                     branch_name=effective_branch_name,
@@ -4842,7 +4890,7 @@ class AutomationService:
 
         execution_runtime = str(runtime_settings.get("execution_runtime") or "devcontainer").strip()
         with execution_runtime_scope(execution_runtime):
-            result = prepare_cm_gpt_handoff(
+            result = prepare_agent_handoff(
                 distro=str(runtime_settings.get("copilot_wsl_distro") or "").strip(),
                 workspace_path=workspace_path,
                 branch_name=branch_name,

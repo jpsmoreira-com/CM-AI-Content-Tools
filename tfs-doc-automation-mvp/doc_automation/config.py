@@ -36,6 +36,8 @@ DEFAULT_AGENT_PROMPT_TEMPLATE = """Read `{{context_path}}`, the adjacent HTML/JS
 Start with `capture/INSTRUCTIONS.md` and `capture/summary.md` before inspecting repository files.
 Inspect referenced specs, linked pull request diffs, and reference documentation when available.
 Keep changes focused, consistent with the existing portal style, and avoid unrelated refactors.
+Never edit generated content under `docs/includes/docsync/**`; update the source or generator instead.
+Treat previous automation reports as audit evidence only and independently verify their conclusions.
 If a spec is used, record the spec name/path and the section or topic that justified the change.
 Finish with a reviewer-ready summary that explains what changed and why."""
 PORTAL_TEMPLATE = {
@@ -101,7 +103,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "copilot_wsl_distro": "Ubuntu",
     "copilot_provider": "copilot_cli",
     "copilot_model_name": "GPT 5.6 Terra",
-    "copilot_agent_name": "",
+    "copilot_agent_name": "Content AI Documentation",
     "copilot_cli_host": "https://github.com",
     "copilot_auto_launch": True,
     "copilot_prompt_template": DEFAULT_AGENT_PROMPT_TEMPLATE,
