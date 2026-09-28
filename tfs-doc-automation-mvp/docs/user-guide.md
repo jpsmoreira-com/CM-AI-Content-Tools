@@ -22,24 +22,80 @@ It never:
 - creates non-draft PRs;
 - edits your own working copy — the agent works in a separate worktree.
 
-## Getting Started
+## Create a Draft PR: End-to-End
 
-1. Open the portal repository in its devcontainer. The bootstrap installs the pipeline, the VS Code Copilot Bridge extension, and starts the dashboard on port `7001` (the port is shown in the terminal if it moved).
-2. Open the dashboard in the browser and go to `Settings > Connection`.
-3. Run `TFS Git Credentials Setup` with your TFS username and token. The credentials are stored in the container's Git credential store and mirrored to your persistent settings folder, so they survive container rebuilds. If your team pre-configured `CONTENT_AI_TFS_GIT_*` inputs, this step is already done.
-4. The bootstrap also installs the shared Content Team skills (`/style-guide-validator`, `/tutorial-source-to-mkdocs`, `/docs-change-summary`) and review subagents into the portal through APM, so they are available to you and to the pipeline's agent in every devcontainer.
-5. Check `Settings > Automation`: select the agent provider, custom agent name, and model approved for your team.
+### 1. Open the portal in a devcontainer
 
-## The Sprint Workflow
+1. Open the target portal repository, such as `DocumentationPortal`, in VS Code.
+2. Use **Rebuild and Reopen in Container** on first use, or after a devcontainer image update.
+3. Wait for the setup to finish. It installs the pipeline, shared Content Team skills, and the dashboard dependencies.
+4. Open the dashboard using the TFS Pipeline button in the VS Code status bar, or run the **Run TFS Pipeline** task.
 
-1. **Select the portal and sprint** on the dashboard. Use the filters (type, state, iteration, closed items) to narrow the list.
-2. **Open a work item card.** The details panel shows the parent item, description, acceptance criteria, attachments, and the inferred base branch and work type.
-3. **Triage it.** Confirm or override the base branch and work type, then save the plan. Items that need no documentation can simply be left untouched or marked accordingly.
-4. **Create the branch.** One branch per work item, named from the version prefix, work type, item id, and title.
-5. **Run the agent.** The dashboard captures the context package and launches the provider. The card shows progress: prepared → launched → agent result → pushed → draft PR. With `Auto flow` enabled, the background runner continues automatically once the agent gives a green light.
-6. **Review the structured result.** The agent's summary, changed files, evidence fields (which captured files, work items, PRs, and diffs it reviewed), and any reviewer notes are shown on the card. If it reports that no accurate documentation change could be made, nothing is pushed.
-7. **Draft PR.** After push, the draft PR is created with the required reviewer and linked to the work item. From here the normal PR review process applies; the pipeline is done.
-8. **Rerun when needed.** `Rerun Agent` starts a fresh agent run on the same branch, for example after you refine the work item or the agent result was rejected.
+### 2. Configure the connection once
+
+Open **Settings > Connection** and confirm the following values.
+
+- **Work Item Project** and **Discovery Area Path**: where the dashboard searches for Content work items.
+- **Base URL**, **Repository Project**, and **Repository Name**: the TFS repository where the work branch and Draft PR will be created.
+- **Agent Workspace Path**: the local clone of that target repository, available inside the current runtime.
+- **Branch Chain**: the supported version and base branches, for example `12.0/dev`.
+
+Save the settings. Then run **TFS Git Credentials Setup** and provide a TFS username and token with repository read/write access. The setup validates the credentials and persists them for later container rebuilds.
+
+### 3. Configure the automation once
+
+Open **Settings > Automation** and set the minimum values below.
+
+- **Content Team Members**: add the TFS identities whose work items should appear in the dashboard.
+- **Default Reviewer**: set the reviewer to add to generated Draft PRs.
+- **Execution Runtime**: select `Devcontainer / native Linux` when the pipeline runs in a devcontainer.
+- **Agent Provider**: select `GitHub Copilot CLI (autonomous)` unless your team has approved another provider.
+- **Model Name**: select the approved model, for example `GPT 5.6 Terra`.
+- **Agent Name**: enter the approved agent name, for example `Content AI Documentation`.
+- **Run Executor Automatically**: enable it.
+- **Preparation-Only Mode**: leave it disabled for automatic execution.
+- **Context Capture**: enable it to include the parent work item, linked work items, PRs, diffs, and available reference material.
+
+Save the settings. If the Copilot preflight requests device authorization, complete the browser authorization and save the settings again until the preflight succeeds.
+
+### 4. Load and inspect a work item
+
+1. Return to the dashboard.
+2. Select the correct **Portal** and **Target Workspace**. The workspace must be the portal repository where documentation will be changed, not the tools repository.
+3. Select an iteration path if required, then click **Load Work Items**.
+4. Open the required work item.
+5. Review **Work Item Context** and **Parent Work Item Context**. Check that the work item contains enough information for an accurate documentation change.
+
+### 5. Plan and create the work branch
+
+1. Confirm or change the suggested base branch and work type.
+2. Save the plan.
+3. Select **Create Work Branch**.
+
+If the work item already has a related documentation branch or PR and you need a separate attempt, select **Create New Work Branch**. This creates a new `-rerun-<timestamp>` branch and preserves the earlier work for comparison.
+
+### 6. Run the automatic flow
+
+Start the configured agent from the work item detail panel. For multiple already-planned items, select them on the dashboard and use **Run Automatic TFS Flow for Selected**.
+
+The dashboard then performs the following stages automatically:
+
+1. Creates an isolated worktree for the work item.
+2. Captures work item, parent, related work item, PR, diff, and reference-document context.
+3. Runs the configured agent using the selected agent and model.
+4. Validates the agent result and changed file list.
+5. Commits and pushes approved changes.
+6. Creates a Draft PR, adds the configured reviewer, and links the PR to the work item.
+
+Do not make manual changes in the selected target workspace while a run is active. Each work item uses its own worktree, but the source clone must remain stable.
+
+### 7. Monitor and review the result
+
+The **Active Automation** summary shows work items that are in progress or queued. Open the work item detail panel to see the current stage, such as `Creating branch`, `Capturing context`, `Waiting for agent result`, `Validating result`, `Pushing changes`, or `Creating Draft PR`.
+
+When the run completes, review the final report, changed files, validation result, commit, and Draft PR link. The pipeline stops at the Draft PR: review, final edits, approval, and merge remain part of the normal team process.
+
+If the agent cannot identify a safe documentation change, the dashboard does not push or create a Draft PR. Review the captured context, update the work item if necessary, then use **Rerun Agent** or **Create New Work Branch**.
 
 ## The Context Package Viewer
 
@@ -53,10 +109,10 @@ If the rich capture fails, the run continues with the basic work item context an
 
 - **Context capture**: enable/disable rich capture, choose `parent` or `task` root mode, limit the number of work items walked, enable local PR diff capture.
 - **Reference Documentation Workspace Path**: folder with specification documents the agent may consult (defaults to a `Documentation` folder next to the repositories).
-- **Run Executor Automatically** and **Auto flow** toggles.
+- **Run Executor Automatically** for unattended agent execution.
 - **Reviewer Resolution** defaults for the draft PR.
 
-Leave provider, model, execution runtime, worktree, and credential settings as configured by your team unless instructed.
+After onboarding, leave provider, model, execution runtime, workspace, and credential settings as configured by your team unless instructed otherwise.
 
 ## Troubleshooting
 
